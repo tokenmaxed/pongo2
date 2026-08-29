@@ -171,8 +171,11 @@ func filterTagParameterIsLiteral(arguments *Parser) bool {
 	case TokenKeyword:
 		return token.Val == "true" || token.Val == "false"
 	case TokenSymbol:
-		return token.Val == "[" ||
-			(token.Val == "-" && arguments.PeekTypeN(1, TokenNumber) != nil)
+		// Array syntax is not necessarily literal: each element is a full
+		// expression, so [data] carries execution-context provenance. Treat all
+		// arrays conservatively unless the parser grows a recursive constant
+		// classification.
+		return token.Val == "-" && arguments.PeekTypeN(1, TokenNumber) != nil
 	default:
 		return false
 	}

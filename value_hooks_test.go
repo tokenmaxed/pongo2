@@ -40,6 +40,31 @@ func TestFilterTagValueHooks(t *testing.T) {
 	}
 }
 
+func TestFilterTagArrayParameterIsNotLiteral(t *testing.T) {
+	set := pongo2.NewSet("array-provenance", &pongo2.DummyLoader{})
+	if err := set.RegisterFilter("keep", func(in, _ *pongo2.Value) (*pongo2.Value, error) {
+		return in, nil
+	}); err != nil {
+		t.Fatalf("RegisterFilter: %v", err)
+	}
+	var literals []bool
+	set.FilterParamValue = func(param *pongo2.Value, literal bool) *pongo2.Value {
+		literals = append(literals, literal)
+		return param
+	}
+
+	tpl, err := set.FromString(`{% filter keep:[data]|keep:["constant"] %}x{% endfilter %}`)
+	if err != nil {
+		t.Fatalf("FromString: %v", err)
+	}
+	if _, err := tpl.Execute(pongo2.Context{"data": "D"}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := []bool{false, false}; !slices.Equal(literals, want) {
+		t.Fatalf("literal flags = %v, want %v", literals, want)
+	}
+}
+
 func TestMacroResultUsesMarkValue(t *testing.T) {
 	set := pongo2.NewSet("macro-hook", &pongo2.DummyLoader{})
 	var marks []string
