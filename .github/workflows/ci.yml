@@ -50,7 +50,10 @@ jobs:
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
           empty_tree="$(git hash-object -t tree /dev/null)"
-          git diff --check "$empty_tree" HEAD
+          # Upstream's rendered-output fixtures intentionally preserve trailing
+          # spaces. Check every other tracked byte from an empty baseline.
+          git diff --check "$empty_tree" HEAD -- . \
+            ':(exclude)template_tests/*.out'
 
       - name: Test
         run: GOWORK=off go test -mod=readonly -count=1 ./...
