@@ -27,7 +27,7 @@ small downstream commit stack keeps every divergence reviewable.
 
 | ID | Change | Upstream status |
 | --- | --- | --- |
-| B0 | Rename module, update x/text, add CI | Fork baseline |
+| B0 | Rename module, add CI, update `x/text` | Fork baseline; v0.41.0 fixes reachable GO-2026-5970 in `slugify` |
 | F1 | Restart lexer after comments/verbatim | [flosch/pongo2#381](https://github.com/flosch/pongo2/pull/381) |
 | F2 | Export token spans and provenance | Fork hook |
 | F3 | Bound macros; expose and validate exported names | Bound: [flosch/pongo2#382](https://github.com/flosch/pongo2/pull/382); exports are hooks |
