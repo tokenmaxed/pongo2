@@ -46,6 +46,11 @@ type TemplateSet struct {
 	// You can change the options before calling the Execute method.
 	Options *Options
 
+	// MacroDepthLimit is the maximum number of simultaneously active macro
+	// calls. A non-positive value uses the default of 1000. Configure it before
+	// executing templates; an execution Meter, when installed, is authoritative.
+	MacroDepthLimit int
+
 	// Per-set tag and filter registries (lazily initialized via initOnce)
 	tags     map[string]*tag
 	filters  map[string]FilterFunction
@@ -94,7 +99,15 @@ func NewSet(name string, loaders ...TemplateLoader) *TemplateSet {
 		templateCache:    make(map[string]*Template),
 		templatesParsing: make(map[string]bool),
 		Options:          newOptions(),
+		MacroDepthLimit:  defaultMacroDepthLimit,
 	}
+}
+
+func (set *TemplateSet) macroDepthLimit() int {
+	if set.MacroDepthLimit <= 0 {
+		return defaultMacroDepthLimit
+	}
+	return set.MacroDepthLimit
 }
 
 func (set *TemplateSet) AddLoader(loaders ...TemplateLoader) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -118,6 +119,18 @@ type Template struct {
 	// whitespaceOnce ensures TrimBlocks/LStripBlocks whitespace trimming
 	// is applied exactly once, even under concurrent execution.
 	whitespaceOnce sync.Once
+}
+
+// ExportedMacroNames returns the names of macros this template makes
+// available to an import. The returned slice is sorted and independent of the
+// template's internal map.
+func (tpl *Template) ExportedMacroNames() []string {
+	names := make([]string, 0, len(tpl.exportedMacros))
+	for name := range tpl.exportedMacros {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // newTemplateString creates a new template from a byte slice containing template source.
