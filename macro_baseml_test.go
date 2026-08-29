@@ -1,12 +1,16 @@
 package pongo2_test
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/tokenmaxed/pongo2/v7"
 )
+
+var errExportedMacroRejected = errors.New("exported macro rejected")
 
 func TestMacroDepthLimitCoversDefinitionsAndImports(t *testing.T) {
 	t.Parallel()
@@ -54,5 +58,31 @@ func TestExportedMacroNamesAreSortedAndIndependent(t *testing.T) {
 	names[0] = "changed"
 	if got := strings.Join(tpl.ExportedMacroNames(), ","); got != "alpha,zebra" {
 		t.Fatalf("second ExportedMacroNames = %q after caller mutation", got)
+	}
+}
+
+func TestValidateExportedMacroCoversImportedTemplates(t *testing.T) {
+	t.Parallel()
+	files := fstest.MapFS{
+		"main.tpl": {Data: []byte(`{% import "macros.tpl" allowed, rejected %}`)},
+		"macros.tpl": {Data: []byte(
+			`{% macro allowed() export %}a{% endmacro %}` +
+				`{% macro rejected() export %}b{% endmacro %}`)},
+	}
+	set := pongo2.NewSet(t.Name(), pongo2.NewFSLoader(files))
+	var names []string
+	set.ValidateExportedMacro = func(name string) error {
+		names = append(names, name)
+		if name == "rejected" {
+			return errExportedMacroRejected
+		}
+		return nil
+	}
+	_, err := set.FromFile("main.tpl")
+	if !errors.Is(err, errExportedMacroRejected) {
+		t.Fatalf("FromFile error = %v, want validator error", err)
+	}
+	if want := []string{"allowed", "rejected"}; !slices.Equal(names, want) {
+		t.Fatalf("validated names = %q, want %q", names, want)
 	}
 }

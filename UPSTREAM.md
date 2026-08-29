@@ -30,7 +30,7 @@ small downstream commit stack keeps every divergence reviewable.
 | B0 | Rename module, update x/text, add CI | Fork baseline |
 | F1 | Restart lexer after comments/verbatim | [flosch/pongo2#381](https://github.com/flosch/pongo2/pull/381) |
 | F2 | Export token spans and provenance | Fork hook |
-| F3 | Bound macros; expose names | Bound: [flosch/pongo2#382](https://github.com/flosch/pongo2/pull/382); export is a hook |
+| F3 | Bound macros; expose and validate exported names | Bound: [flosch/pongo2#382](https://github.com/flosch/pongo2/pull/382); exports are hooks |
 | F4 | Meter work, live buffers, and macros | Fork hook |
 | F5 | Resolve filters; mark values | Ban fix: [flosch/pongo2#384](https://github.com/flosch/pongo2/pull/384); hooks are policy |
 | F6 | Add resolved-value/context hooks | Fork hook |

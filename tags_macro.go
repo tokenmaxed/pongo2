@@ -216,6 +216,16 @@ func tagMacroParser(doc *Parser, start *Token, arguments *Parser) (INodeTag, err
 	}
 
 	if macroNode.exported {
+		if validate := doc.template.set.ValidateExportedMacro; validate != nil {
+			if err := validate(macroNode.name); err != nil {
+				return nil, &Error{
+					Template: doc.template,
+					Filename: nameToken.Filename,
+					Line:     nameToken.Line, Column: nameToken.Col,
+					Token: nameToken, Sender: "parser", OrigError: err,
+				}
+			}
+		}
 		// Now register the macro if it wants to be exported
 		_, has := doc.template.exportedMacros[macroNode.name]
 		if has {

@@ -61,6 +61,11 @@ type TemplateSet struct {
 	// than resolved from the execution context.
 	FilterParamValue func(param *Value, literal bool) *Value
 
+	// ValidateExportedMacro, when non-nil, validates every exported macro as
+	// its defining template is parsed. It also observes templates parsed
+	// transitively by an import. Returning an error rejects the template.
+	ValidateExportedMacro func(name string) error
+
 	// Per-set tag and filter registries (lazily initialized via initOnce)
 	tags           map[string]*tag
 	filters        map[string]FilterFunction
