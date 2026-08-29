@@ -143,6 +143,16 @@ type Token struct {
 	// Col is the 1-based column number where this token starts.
 	Col int
 
+	// Pos and End are the zero-based byte offsets of the token's half-open
+	// source span. The span names the original bytes even when Val is decoded
+	// or a whitespace-trimming delimiter is normalized.
+	Pos int
+	End int
+
+	// Verbatim reports that a TokenHTML came from inside a verbatim region.
+	// It is false for every other token and for ordinary HTML.
+	Verbatim bool
+
 	// TrimWhitespaces is true for whitespace-trimming delimiters ({{-, -}}, {%-, -%}).
 	// When true, adjacent whitespace in HTML content should be stripped.
 	TrimWhitespaces bool
@@ -241,8 +251,15 @@ func (t *Token) String() string {
 		typ, t.Typ, val, t.Line, t.Col, t.TrimWhitespaces)
 }
 
+// Lex tokenizes source and returns the tokens used by pongo2's parser. Token
+// spans refer to byte offsets in source; comments and verbatim delimiters are
+// omitted, leaving gaps between the surrounding tokens.
+func Lex(name, source string) ([]*Token, error) {
+	return lex(name, source)
+}
+
 // lex tokenizes the given template source string and returns a slice of tokens.
-// This is the main entry point for lexical analysis.
+// This is the internal entry point used by the parser.
 //
 // Parameters:
 //   - name: The template name/filename (used for error messages)
@@ -299,6 +316,9 @@ func (l *lexer) emit(t TokenType) {
 		Val:      l.value(),
 		Line:     l.startline,
 		Col:      l.startcol,
+		Pos:      l.start,
+		End:      l.pos,
+		Verbatim: t == TokenHTML && l.inVerbatim,
 	}
 
 	if t == TokenString {
@@ -389,6 +409,8 @@ func (l *lexer) errorf(format string, args ...any) lexerStateFn {
 		Val:      fmt.Sprintf(format, args...),
 		Line:     l.startline,
 		Col:      l.startcol,
+		Pos:      l.start,
+		End:      l.pos,
 	}
 	l.tokens = append(l.tokens, t)
 	l.errored = true

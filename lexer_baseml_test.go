@@ -47,6 +47,75 @@ func TestLexerRestartsAfterCommentAndVerbatim(t *testing.T) {
 	}
 }
 
+func TestLexReportsSourceSpansAndVerbatimHTML(t *testing.T) {
+	t.Parallel()
+	const source = "α{# drop #}{% verbatim %}{{ raw }}{% endverbatim %}B{{- \"x\\n\" -}}C"
+	tokens, err := pongo2.Lex("spans.tpl", source)
+	if err != nil {
+		t.Fatalf("Lex: %v", err)
+	}
+	for index, token := range tokens {
+		if token.Pos < 0 || token.Pos > token.End || token.End > len(source) {
+			t.Fatalf("token %d has invalid span [%d:%d] in %d bytes",
+				index, token.Pos, token.End, len(source))
+		}
+		if index > 0 && token.Pos < tokens[index-1].End {
+			t.Fatalf("token %d overlaps its predecessor: [%d:%d] after [%d:%d]",
+				index, token.Pos, token.End,
+				tokens[index-1].Pos, tokens[index-1].End)
+		}
+		if token.Verbatim && token.Typ != pongo2.TokenHTML {
+			t.Fatalf("non-HTML token %d is marked verbatim: %#v", index, token)
+		}
+	}
+
+	assertHTMLSpan := func(value string, verbatim bool) {
+		t.Helper()
+		start := strings.Index(source, value)
+		if start < 0 {
+			t.Fatalf("source does not contain %q", value)
+		}
+		for _, token := range tokens {
+			if token.Typ == pongo2.TokenHTML && token.Val == value {
+				if token.Pos != start || token.End != start+len(value) ||
+					token.Verbatim != verbatim {
+					t.Fatalf("HTML %q = span [%d:%d], verbatim %t; want [%d:%d], %t",
+						value, token.Pos, token.End, token.Verbatim,
+						start, start+len(value), verbatim)
+				}
+				return
+			}
+		}
+		t.Fatalf("no HTML token for %q", value)
+	}
+	assertHTMLSpan("α", false)
+	assertHTMLSpan("{{ raw }}", true)
+	assertHTMLSpan("B", false)
+	assertHTMLSpan("C", false)
+
+	open := strings.Index(source, "{{-")
+	close := strings.Index(source, "-}}")
+	quoted := strings.Index(source, `"x\n"`)
+	var sawOpen, sawString, sawClose bool
+	for _, token := range tokens {
+		switch {
+		case token.Typ == pongo2.TokenSymbol && token.Pos == open:
+			sawOpen = token.Val == "{{" && token.TrimWhitespaces &&
+				token.End == open+len("{{-")
+		case token.Typ == pongo2.TokenString:
+			sawString = token.Val == "x\n" && token.Pos == quoted+1 &&
+				token.End == quoted+len(`"x\n"`)-1
+		case token.Typ == pongo2.TokenSymbol && token.Pos == close:
+			sawClose = token.Val == "}}" && token.TrimWhitespaces &&
+				token.End == close+len("-}}")
+		}
+	}
+	if !sawOpen || !sawString || !sawClose {
+		t.Fatalf("normalized token spans missing: open=%t string=%t close=%t\n%#v",
+			sawOpen, sawString, sawClose, tokens)
+	}
+}
+
 // This differential oracle pins the Django comment contract: a short
 // comment produces nothing and every other fragment produces its own output.
 func TestTemplateCommentSemanticsMatchDjangoOracle(t *testing.T) {
