@@ -28,13 +28,10 @@ small downstream commit stack keeps every divergence reviewable.
 | ID | Change | Upstream status |
 | --- | --- | --- |
 | B0 | Rename module, update x/text, add CI | Fork baseline |
-| F1 | Restart lexer after comments/verbatim | To be filed |
+| F1 | Restart lexer after comments/verbatim | [flosch/pongo2#381](https://github.com/flosch/pongo2/pull/381) |
 | F2 | Export token spans and provenance | Fork hook |
-| F3 | Bound macros; expose names | Bound to be filed; export is a hook |
+| F3 | Bound macros; expose names | Bound: [flosch/pongo2#382](https://github.com/flosch/pongo2/pull/382); export is a hook |
 | F4 | Meter work, live buffers, and macros | Fork hook |
-| F5 | Resolve filters; mark values | Ban fix to file; hooks are policy |
+| F5 | Resolve filters; mark values | Ban fix: [flosch/pongo2#384](https://github.com/flosch/pongo2/pull/384); hooks are policy |
 | F6 | Add resolved-value/context hooks | Fork hook |
-| F7 | Fix `urlize` escaping and mail passes | To be filed |
-
-Replace each "To be filed" entry with its upstream pull request link when it
-is opened.
+| F7 | Fix `urlize` escaping and mail passes | [flosch/pongo2#383](https://github.com/flosch/pongo2/pull/383) |
