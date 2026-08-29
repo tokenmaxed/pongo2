@@ -1299,8 +1299,9 @@ func TestDictsortHelperEdgeCases(t *testing.T) {
 
 	t.Run("struct with unexported fields", func(t *testing.T) {
 		type privateStruct struct {
-			Name    string
-			private int //nolint:unused
+			Name string
+			//lint:ignore U1000 the fixture needs an unexported field
+			private int
 		}
 		input := []privateStruct{
 			{Name: "Charlie"},

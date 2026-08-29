@@ -254,8 +254,9 @@ func TestResolveIntIndex(t *testing.T) {
 // TestResolveIdentifier tests the resolveIdentifier helper via templates.
 func TestResolveIdentifier(t *testing.T) {
 	type TestStruct struct {
-		Public  string
-		private string //nolint:unused // testing unexported field behavior
+		Public string
+		//lint:ignore U1000 the fixture exercises unexported-field behavior
+		private string
 	}
 
 	tests := []struct {

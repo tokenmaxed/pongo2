@@ -27,6 +27,7 @@ small downstream commit stack keeps every divergence reviewable.
 
 | ID | Change | Upstream status |
 | --- | --- | --- |
+| B0 | Rename module, update x/text, add CI | Fork baseline |
 | F1 | Restart lexer after comments/verbatim | To be filed |
 | F2 | Export token spans and provenance | Fork hook |
 | F3 | Bound macros; expose names | Bound to be filed; export is a hook |
