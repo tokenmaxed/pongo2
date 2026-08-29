@@ -89,3 +89,11 @@ func (buffer *meteredBuffer) release() {
 		buffer.charged = 0
 	}
 }
+
+// retain transfers ownership of the buffer's live-byte charge to the caller.
+// The returned bytes remain valid after the meteredBuffer itself is discarded.
+func (buffer *meteredBuffer) retain() ([]byte, int) {
+	contents, charged := buffer.Bytes(), buffer.charged
+	buffer.charged = 0
+	return contents, charged
+}

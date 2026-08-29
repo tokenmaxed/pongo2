@@ -301,6 +301,7 @@ func (tpl *Template) executeWithOptions(context Context, writer TemplateWriter, 
 	if err != nil {
 		return err
 	}
+	defer ctx.releaseExecutionState()
 
 	// Run the selected document
 	if err := parent.root.Execute(ctx, writer); err != nil {

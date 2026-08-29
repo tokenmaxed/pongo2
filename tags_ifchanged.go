@@ -6,8 +6,30 @@ import (
 
 // ifchangedState holds the per-execution mutable state for an {% ifchanged %} tag.
 type ifchangedState struct {
-	lastValues  []*Value
-	lastContent []byte
+	lastValues    []*Value
+	lastContent   []byte
+	contentMeter  Meter
+	contentCharge int
+}
+
+func (state *ifchangedState) releaseContent() {
+	if state.contentMeter != nil && state.contentCharge > 0 {
+		state.contentMeter.Release(state.contentCharge)
+	}
+	state.lastContent = nil
+	state.contentMeter = nil
+	state.contentCharge = 0
+}
+
+func (state *ifchangedState) replaceContent(content []byte, meter Meter, charge int) {
+	state.releaseContent()
+	state.lastContent = content
+	state.contentMeter = meter
+	state.contentCharge = charge
+}
+
+func (state *ifchangedState) releaseExecutionState() {
+	state.releaseContent()
 }
 
 // tagIfchangedNode represents the {% ifchanged %} tag.
@@ -75,8 +97,8 @@ func (node *tagIfchangedNode) Execute(ctx *ExecutionContext, writer TemplateWrit
 	if len(node.watchedExpr) == 0 {
 		// Check against own rendered body
 
-		// TODO: Check opportunity for buffer recycling
-		buf := bytes.NewBuffer(make([]byte, 0, 1024)) // 1 KiB
+		buf := newMeteredBuffer(ctx.Meter, 1024) // 1 KiB initial capacity
+		defer buf.release()
 
 		err := node.thenWrapper.Execute(ctx, buf)
 		if err != nil {
@@ -87,7 +109,9 @@ func (node *tagIfchangedNode) Execute(ctx *ExecutionContext, writer TemplateWrit
 
 		changed := !bytes.Equal(state.lastContent, bufBytes)
 		if changed {
-			state.lastContent = bufBytes
+			content, charge := buf.retain()
+			state.replaceContent(content, ctx.Meter, charge)
+			bufBytes = state.lastContent
 		}
 
 		if changed {

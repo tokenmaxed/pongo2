@@ -179,6 +179,12 @@ func TestMeterErrorsAbortEveryMeteredConstruct(t *testing.T) {
 				}, "child.tpl")
 			},
 		},
+		{
+			name: "ifchanged content buffer",
+			tpl: func(t *testing.T) *Template {
+				return templateFromSource(t, `{% ifchanged %}a{{ suffix }}{% endifchanged %}`)
+			},
+		},
 	}
 	for _, test := range buffered {
 		t.Run(test.name, func(t *testing.T) {
@@ -201,6 +207,26 @@ func TestMeterErrorsAbortEveryMeteredConstruct(t *testing.T) {
 					meter.totalCharge, meter.totalRelease, meter.charged)
 			}
 		})
+	}
+}
+
+func TestMeterIfchangedRetainedContentAccounting(t *testing.T) {
+	tpl := templateFromSource(t,
+		`{% for value in values %}{% ifchanged %}{{ value }}{% else %}!{% endifchanged %}{% endfor %}`)
+	meter := &recordingMeter{}
+	output, err := executeWithMeter(t, tpl, Context{"values": []string{"aa", "aa", "bb"}}, meter)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if output != "aa!bb" {
+		t.Fatalf("output = %q, want aa!bb", output)
+	}
+	if meter.peakCharged != 4 {
+		t.Fatalf("peak charge = %d, want old and candidate contents (4 bytes)", meter.peakCharged)
+	}
+	if meter.totalCharge != 6 || meter.totalRelease != 6 || meter.charged != 0 {
+		t.Fatalf("charge/release/current = %d/%d/%d, want 6/6/0",
+			meter.totalCharge, meter.totalRelease, meter.charged)
 	}
 }
 
@@ -266,17 +292,18 @@ func TestNilMeterIsByteIdentical(t *testing.T) {
 				`{% block body %}` +
 				`{% macro cell(value) %}<i>{{ value }}</i>{% endmacro %}` +
 				`{% filter upper %}{% spaceless %}` +
-				`<div>{{ block.Super }}{% for value in values %}{{ cell(value) }}{% endfor %}</div>` +
+				`<div>{{ block.Super }}{% for value in values %}` +
+				`{% ifchanged %}{{ cell(value) }}{% else %}!{% endifchanged %}{% endfor %}</div>` +
 				`{% endspaceless %}{% endfilter %}` +
 				`{% endblock %}`)},
 	}, "child.tpl")
-	context := Context{"base": "b&", "values": []string{"a", "<c>"}}
+	context := Context{"base": "b&", "values": []string{"a", "a", "<c>"}}
 
 	var ordinary bytes.Buffer
 	if err := tpl.ExecuteWriterUnbuffered(context, &ordinary); err != nil {
 		t.Fatalf("ExecuteWriterUnbuffered: %v", err)
 	}
-	const expected = `base:<DIV><STRONG>B&AMP;</STRONG><I>A</I><I>&LT;C&GT;</I></DIV>:end`
+	const expected = `base:<DIV><STRONG>B&AMP;</STRONG><I>A</I>!<I>&LT;C&GT;</I></DIV>:end`
 	if ordinary.String() != expected {
 		t.Fatalf("ordinary output = %q, want upstream bytes %q", ordinary.String(), expected)
 	}

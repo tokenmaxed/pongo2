@@ -102,6 +102,12 @@ type ExecutionContext struct {
 	tagState map[any]any
 }
 
+// executionStateReleaser is implemented by per-execution tag state that owns
+// resources accounted to a Meter.
+type executionStateReleaser interface {
+	releaseExecutionState()
+}
+
 var pongo2MetaContext = Context{
 	"version": Version,
 }
@@ -149,6 +155,14 @@ func NewChildExecutionContext(parent *ExecutionContext) *ExecutionContext {
 	newctx.Private.Update(parent.Private)
 
 	return newctx
+}
+
+func (ctx *ExecutionContext) releaseExecutionState() {
+	for _, state := range ctx.tagState {
+		if releaser, ok := state.(executionStateReleaser); ok {
+			releaser.releaseExecutionState()
+		}
+	}
 }
 
 func (ctx *ExecutionContext) Error(msg string, token *Token) error {
