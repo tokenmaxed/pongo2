@@ -9,6 +9,8 @@ name: CI
   push:
     branches:
       - dev
+    tags:
+      - "v*"
 
 permissions:
   contents: read
