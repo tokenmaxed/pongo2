@@ -1,7 +1,6 @@
 package pongo2
 
 import (
-	"bytes"
 	"fmt"
 )
 
@@ -77,6 +76,14 @@ func (node *tagMacroNode) Execute(ctx *ExecutionContext, writer TemplateWriter) 
 // definition site and to one registered by an import.
 func (node *tagMacroNode) callable(ctx *ExecutionContext) func(args ...*Value) (*Value, error) {
 	return func(args ...*Value) (*Value, error) {
+		if ctx.Meter != nil {
+			if err := ctx.Meter.EnterMacro(); err != nil {
+				return nil, err
+			}
+			defer ctx.Meter.LeaveMacro()
+			return node.call(ctx, args...)
+		}
+
 		ctx.macroDepth++
 		defer func() {
 			ctx.macroDepth--
@@ -130,13 +137,14 @@ func (node *tagMacroNode) call(ctx *ExecutionContext, args ...*Value) (*Value, e
 		macroCtx.Private[node.argsOrder[idx]] = argValue.Interface()
 	}
 
-	var b bytes.Buffer
-	err := node.wrapper.Execute(macroCtx, &b)
+	body := newMeteredBuffer(macroCtx.Meter, 0)
+	defer body.release()
+	err := node.wrapper.Execute(macroCtx, body)
 	if err != nil {
 		return AsSafeValue(""), updateErrorToken(err, ctx.template, node.position)
 	}
 
-	return AsSafeValue(b.String()), nil
+	return AsSafeValue(body.String()), nil
 }
 
 // tagMacroParser parses the {% macro %} tag. It requires a name, argument list

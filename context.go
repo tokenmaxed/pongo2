@@ -71,7 +71,12 @@ type ExecutionContext struct {
 	template *Template
 
 	// Tracks recursive macro call depth; errors if exceeding maxMacroDepth.
+	// An installed Meter is authoritative instead.
 	macroDepth int
+
+	// Meter observes and may bound work in this execution. Child contexts keep
+	// the same Meter so scopes share one execution-wide budget.
+	Meter Meter
 
 	// When true, {{ variable }} output is HTML-escaped. Toggle with {% autoescape %}.
 	// The |safe filter bypasses escaping.
@@ -102,6 +107,10 @@ var pongo2MetaContext = Context{
 }
 
 func newExecutionContext(tpl *Template, ctx Context) *ExecutionContext {
+	return newExecutionContextWithOptions(tpl, ctx, ExecutionOptions{})
+}
+
+func newExecutionContextWithOptions(tpl *Template, ctx Context, options ExecutionOptions) *ExecutionContext {
 	privateCtx := make(Context)
 
 	// Make the pongo2-related funcs/vars available to the context
@@ -109,6 +118,7 @@ func newExecutionContext(tpl *Template, ctx Context) *ExecutionContext {
 
 	return &ExecutionContext{
 		template: tpl,
+		Meter:    options.Meter,
 
 		Public:     ctx,
 		Private:    privateCtx,
@@ -126,6 +136,7 @@ func newExecutionContext(tpl *Template, ctx Context) *ExecutionContext {
 func NewChildExecutionContext(parent *ExecutionContext) *ExecutionContext {
 	newctx := &ExecutionContext{
 		template: parent.template,
+		Meter:    parent.Meter,
 
 		Public:     parent.Public,
 		Private:    make(Context),

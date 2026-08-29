@@ -1,7 +1,6 @@
 package pongo2
 
 import (
-	"bytes"
 	"regexp"
 	"strings"
 )
@@ -54,7 +53,8 @@ var tagSpacelessRegexp = regexp.MustCompile(`(?U:(<.*>))([\t\n\v\f\r ]+)(?U:(<.*
 // Execute renders the block content and removes whitespace between HTML tags.
 // The removal is applied recursively until no more whitespace can be removed.
 func (node *tagSpacelessNode) Execute(ctx *ExecutionContext, writer TemplateWriter) error {
-	b := bytes.NewBuffer(make([]byte, 0, 1024)) // 1 KiB
+	b := newMeteredBuffer(ctx.Meter, 1024) // 1 KiB initial capacity
+	defer b.release()
 
 	err := node.wrapper.Execute(ctx, b)
 	if err != nil {
