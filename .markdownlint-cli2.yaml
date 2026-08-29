@@ -1,0 +1,4 @@
+# The inherited README follows upstream's long-line style. Keep every other
+# Markdown rule enabled for fork-owned documents.
+config:
+  MD013: false
