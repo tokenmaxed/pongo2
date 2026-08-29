@@ -8,6 +8,22 @@ import (
 // FilterFunction is the type filter functions must fulfil
 type FilterFunction func(in *Value, param *Value) (out *Value, err error)
 
+// FilterFunctionCtx is a filter function that can observe the execution
+// context of the expression or filter tag applying it.
+type FilterFunctionCtx func(ctx *ExecutionContext, in *Value, param *Value) (out *Value, err error)
+
+type resolvedFilter struct {
+	plain       FilterFunction
+	withContext FilterFunctionCtx
+}
+
+func (filter resolvedFilter) execute(ctx *ExecutionContext, in *Value, param *Value) (*Value, error) {
+	if filter.withContext != nil {
+		return filter.withContext(ctx, in, param)
+	}
+	return filter.plain(in, param)
+}
+
 var builtinFilters = make(map[string]FilterFunction)
 
 // copyFilters creates a shallow copy of a filter map.
@@ -77,7 +93,7 @@ type filterCall struct {
 	name      string
 	parameter IEvaluator
 
-	filterFunc FilterFunction
+	filterFunc resolvedFilter
 }
 
 func (fc *filterCall) Execute(v *Value, ctx *ExecutionContext) (*Value, error) {
@@ -93,7 +109,7 @@ func (fc *filterCall) Execute(v *Value, ctx *ExecutionContext) (*Value, error) {
 		param = AsValue(nil)
 	}
 
-	filteredValue, err := fc.filterFunc(v, param)
+	filteredValue, err := fc.filterFunc.execute(ctx, v, param)
 	if err != nil {
 		return nil, updateErrorToken(err, ctx.template, fc.token)
 	}
@@ -120,7 +136,7 @@ func (p *Parser) parseFilter() (*filterCall, error) {
 	}
 
 	// Get the appropriate filter function and bind it
-	filterFn, exists := p.template.set.filters[identToken.Val]
+	filterFn, exists := p.template.set.resolveFilter(identToken.Val)
 	if !exists {
 		return nil, p.Error(fmt.Sprintf("Filter '%s' does not exist.", identToken.Val), identToken)
 	}

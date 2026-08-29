@@ -4,17 +4,20 @@ import "bytes"
 
 // Meter observes and may bound work performed by one template execution.
 //
-// Iteration is called before each for-loop iteration. Charge is called before
-// pongo2 retains n additional bytes in an internal construct buffer; a
-// successful charge is paired with Release when those bytes are no longer
-// retained. EnterMacro is called before each macro body; a successful entry is
-// paired with LeaveMacro when the call returns.
+// Iteration is called before each for-loop iteration. Resolved is called after
+// each variable resolution and for a filter tag's rendered block. Charge is
+// called before pongo2 retains n additional bytes in an internal construct
+// buffer; a successful charge is paired with Release when those bytes are no
+// longer retained. EnterMacro is called before each macro body; a successful
+// entry is paired with LeaveMacro when the call returns.
 //
-// Returning an error from Iteration, Charge, or EnterMacro aborts execution.
-// A failed Charge reserves no bytes, and a failed EnterMacro does not require a
-// LeaveMacro call. The same Meter is shared by all child execution contexts.
+// Returning an error from Iteration, Resolved, Charge, or EnterMacro aborts
+// execution. A failed Charge reserves no bytes, and a failed EnterMacro does
+// not require a LeaveMacro call. The same Meter is shared by all child
+// execution contexts.
 type Meter interface {
 	Iteration() error
+	Resolved(v *Value) error
 	Charge(n int) error
 	Release(n int)
 	EnterMacro() error

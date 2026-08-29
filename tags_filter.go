@@ -5,7 +5,7 @@ import "fmt"
 // nodeFilterCall represents one resolved filter with its optional parameter.
 type nodeFilterCall struct {
 	paramExpr IEvaluator
-	filter    FilterFunction
+	filter    resolvedFilter
 	literal   bool
 }
 
@@ -65,6 +65,11 @@ func (node *tagFilterNode) Execute(ctx *ExecutionContext, writer TemplateWriter)
 	}
 
 	value := AsValue(temp.String())
+	if ctx.Meter != nil {
+		if err := ctx.Meter.Resolved(value); err != nil {
+			return ctx.OrigError(err, node.position)
+		}
+	}
 	if ctx.template.set.MarkValue != nil {
 		value = ctx.template.set.MarkValue(value)
 	}
@@ -82,9 +87,9 @@ func (node *tagFilterNode) Execute(ctx *ExecutionContext, writer TemplateWriter)
 		} else {
 			param = AsValue(nil)
 		}
-		value, err = call.filter(value, param)
+		value, err = call.filter.execute(ctx, value, param)
 		if err != nil {
-			return ctx.Error(err.Error(), node.position)
+			return ctx.OrigError(err, node.position)
 		}
 		if ctx.template.set.MarkValue != nil {
 			value = ctx.template.set.MarkValue(value)
@@ -124,7 +129,7 @@ func tagFilterParser(doc *Parser, start *Token, arguments *Parser) (INodeTag, er
 			return nil, arguments.Error(fmt.Sprintf("Usage of filter '%s' is not allowed (sandbox restriction active).",
 				nameToken.Val), nameToken)
 		}
-		filter, exists := doc.template.set.filters[nameToken.Val]
+		filter, exists := doc.template.set.resolveFilter(nameToken.Val)
 		if !exists {
 			return nil, arguments.Error(fmt.Sprintf("Filter '%s' does not exist.", nameToken.Val), nameToken)
 		}

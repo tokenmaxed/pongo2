@@ -13,6 +13,7 @@ var errMeterStopped = errors.New("meter stopped execution")
 
 type recordingMeter struct {
 	iterationErr error
+	resolvedErr  error
 	chargeErr    error
 	enterErr     error
 
@@ -20,6 +21,7 @@ type recordingMeter struct {
 	enterLimit  int
 
 	iterationCalls int
+	resolvedCalls  int
 	chargeCalls    int
 	enterCalls     int
 	leaveCalls     int
@@ -35,6 +37,11 @@ type recordingMeter struct {
 func (meter *recordingMeter) Iteration() error {
 	meter.iterationCalls++
 	return meter.iterationErr
+}
+
+func (meter *recordingMeter) Resolved(*Value) error {
+	meter.resolvedCalls++
+	return meter.resolvedErr
 }
 
 func (meter *recordingMeter) Charge(n int) error {
@@ -116,7 +123,7 @@ func TestMeterErrorsAbortEveryMeteredConstruct(t *testing.T) {
 		tpl := templateFromSource(t, `{% macro value() %}unreachable{% endmacro %}{{ value() }}`)
 		meter := &recordingMeter{enterErr: errMeterStopped}
 		output, err := executeWithMeter(t, tpl, nil, meter)
-		if err == nil || !strings.Contains(err.Error(), errMeterStopped.Error()) {
+		if !errors.Is(err, errMeterStopped) {
 			t.Fatalf("Execute error = %v, want meter error", err)
 		}
 		if output != "" || meter.enterCalls != 1 || meter.leaveCalls != 0 || meter.chargeCalls != 0 {
@@ -132,7 +139,7 @@ func TestMeterErrorsAbortEveryMeteredConstruct(t *testing.T) {
 		}, "main.tpl")
 		meter := &recordingMeter{enterErr: errMeterStopped}
 		output, err := executeWithMeter(t, tpl, nil, meter)
-		if err == nil || !strings.Contains(err.Error(), errMeterStopped.Error()) {
+		if !errors.Is(err, errMeterStopped) {
 			t.Fatalf("Execute error = %v, want meter error", err)
 		}
 		if output != "" || meter.enterCalls != 1 || meter.leaveCalls != 0 || meter.chargeCalls != 0 {
@@ -180,7 +187,7 @@ func TestMeterErrorsAbortEveryMeteredConstruct(t *testing.T) {
 				chargeLimit: 1,
 			}
 			output, err := executeWithMeter(t, test.tpl(t), Context{"suffix": "b"}, meter)
-			if err == nil || !strings.Contains(err.Error(), errMeterStopped.Error()) {
+			if !errors.Is(err, errMeterStopped) {
 				t.Fatalf("Execute error = %v, want meter error", err)
 			}
 			if output != "" {
@@ -242,7 +249,7 @@ func TestMeterMacroErrorReleasesSuccessfulEntries(t *testing.T) {
 		`{% macro recurse(n) %}{% if n > 0 %}{{ recurse(n-1) }}{% endif %}{% endmacro %}{{ recurse(20) }}`)
 	meter := &recordingMeter{enterErr: errMeterStopped, enterLimit: 3}
 	_, err := executeWithMeter(t, tpl, nil, meter)
-	if err == nil || !strings.Contains(err.Error(), errMeterStopped.Error()) {
+	if !errors.Is(err, errMeterStopped) {
 		t.Fatalf("Execute error = %v, want meter error", err)
 	}
 	if meter.enterCalls != 4 || meter.leaveCalls != 3 || meter.macroDepth != 0 {
@@ -289,5 +296,38 @@ func TestNewChildExecutionContextCopiesMeter(t *testing.T) {
 	child := NewChildExecutionContext(parent)
 	if child.Meter != meter {
 		t.Fatalf("child Meter = %#v, want parent's %#v", child.Meter, meter)
+	}
+}
+
+func TestMeterResolvedErrorsPreserveIdentity(t *testing.T) {
+	tests := map[string]string{
+		"variable":   `{{ value }}`,
+		"filter tag": `{% filter upper %}body{% endfilter %}`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			tpl := templateFromSource(t, source)
+			meter := &recordingMeter{resolvedErr: errMeterStopped}
+			_, err := executeWithMeter(t, tpl, Context{"value": "body"}, meter)
+			if !errors.Is(err, errMeterStopped) {
+				t.Fatalf("Execute error = %v, want errors.Is meter error", err)
+			}
+			if meter.resolvedCalls != 1 {
+				t.Fatalf("Resolved calls = %d, want 1", meter.resolvedCalls)
+			}
+		})
+	}
+}
+
+func TestMeterResolvedCoversLoopSubjectAndItems(t *testing.T) {
+	tpl := templateFromSource(t, `{% for item in items %}{{ item }}{% endfor %}`)
+	meter := &recordingMeter{}
+	output, err := executeWithMeter(t, tpl, Context{"items": []string{"a", "b"}}, meter)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if output != "ab" || meter.iterationCalls != 2 || meter.resolvedCalls != 3 {
+		t.Fatalf("output/iterations/resolved = %q/%d/%d, want ab/2/3",
+			output, meter.iterationCalls, meter.resolvedCalls)
 	}
 }

@@ -194,9 +194,9 @@ func (nv *nodeVariable) Execute(ctx *ExecutionContext, writer TemplateWriter) er
 
 	if !nv.expr.FilterApplied("safe") && !value.safe && value.IsString() && ctx.Autoescape {
 		// apply escape filter
-		escapeFn := ctx.template.set.filters["escape"]
-		if escapeFn != nil {
-			value, err = escapeFn(value, nil)
+		escapeFn, exists := ctx.template.set.resolveFilter("escape")
+		if exists {
+			value, err = escapeFn.execute(ctx, value, AsValue(nil))
 			if err != nil {
 				return err
 			}
@@ -581,7 +581,12 @@ func (vr *variableResolver) executeCall(
 func (vr *variableResolver) Evaluate(ctx *ExecutionContext) (*Value, error) {
 	value, err := vr.resolve(ctx)
 	if err != nil {
-		return AsValue(nil), ctx.Error(err.Error(), vr.locationToken)
+		return AsValue(nil), ctx.OrigError(err, vr.locationToken)
+	}
+	if ctx.Meter != nil {
+		if err := ctx.Meter.Resolved(value); err != nil {
+			return AsValue(nil), ctx.OrigError(err, vr.locationToken)
+		}
 	}
 	return value, nil
 }
