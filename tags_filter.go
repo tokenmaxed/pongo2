@@ -2,11 +2,11 @@ package pongo2
 
 import "fmt"
 
-// nodeFilterCall represents a single filter call with its name and optional parameter.
+// nodeFilterCall represents one resolved filter with its optional parameter.
 type nodeFilterCall struct {
-	name      string
 	paramExpr IEvaluator
 	filter    FilterFunction
+	literal   bool
 }
 
 // tagFilterNode represents the {% filter %} tag.
@@ -65,6 +65,9 @@ func (node *tagFilterNode) Execute(ctx *ExecutionContext, writer TemplateWriter)
 	}
 
 	value := AsValue(temp.String())
+	if ctx.template.set.MarkValue != nil {
+		value = ctx.template.set.MarkValue(value)
+	}
 
 	for _, call := range node.filterChain {
 		var param *Value
@@ -73,12 +76,18 @@ func (node *tagFilterNode) Execute(ctx *ExecutionContext, writer TemplateWriter)
 			if err != nil {
 				return err
 			}
+			if ctx.template.set.FilterParamValue != nil {
+				param = ctx.template.set.FilterParamValue(param, call.literal)
+			}
 		} else {
 			param = AsValue(nil)
 		}
 		value, err = call.filter(value, param)
 		if err != nil {
 			return ctx.Error(err.Error(), node.position)
+		}
+		if ctx.template.set.MarkValue != nil {
+			value = ctx.template.set.MarkValue(value)
 		}
 	}
 
@@ -111,8 +120,6 @@ func tagFilterParser(doc *Parser, start *Token, arguments *Parser) (INodeTag, er
 		if nameToken == nil {
 			return nil, arguments.Error("Expected a filter name (identifier).", nil)
 		}
-		filterCall.name = nameToken.Val
-
 		if _, banned := doc.template.set.bannedFilters[nameToken.Val]; banned {
 			return nil, arguments.Error(fmt.Sprintf("Usage of filter '%s' is not allowed (sandbox restriction active).",
 				nameToken.Val), nameToken)
@@ -126,6 +133,7 @@ func tagFilterParser(doc *Parser, start *Token, arguments *Parser) (INodeTag, er
 		if arguments.MatchOne(TokenSymbol, ":") != nil {
 			// Filter parameter
 			// NOTICE: we can't use ParseExpression() here, because it would parse the next filter "|..." as well in the argument list
+			filterCall.literal = filterTagParameterIsLiteral(arguments)
 			expr, err := arguments.parseVariableOrLiteral()
 			if err != nil {
 				return nil, err
@@ -145,6 +153,24 @@ func tagFilterParser(doc *Parser, start *Token, arguments *Parser) (INodeTag, er
 	}
 
 	return filterNode, nil
+}
+
+func filterTagParameterIsLiteral(arguments *Parser) bool {
+	token := arguments.Current()
+	if token == nil {
+		return false
+	}
+	switch token.Typ {
+	case TokenNumber, TokenString:
+		return true
+	case TokenKeyword:
+		return token.Val == "true" || token.Val == "false"
+	case TokenSymbol:
+		return token.Val == "[" ||
+			(token.Val == "-" && arguments.PeekTypeN(1, TokenNumber) != nil)
+	default:
+		return false
+	}
 }
 
 func init() {

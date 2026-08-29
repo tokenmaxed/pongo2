@@ -51,6 +51,16 @@ type TemplateSet struct {
 	// executing templates; an execution Meter, when installed, is authoritative.
 	MacroDepthLimit int
 
+	// MarkValue, when non-nil, marks values produced by macros and by each
+	// stage of a filter tag. It can preserve downstream provenance that the
+	// engine's ordinary safe bit cannot express.
+	MarkValue func(*Value) *Value
+
+	// FilterParamValue, when non-nil, marks an explicit filter-tag parameter.
+	// literal reports whether the parameter was written as a literal rather
+	// than resolved from the execution context.
+	FilterParamValue func(param *Value, literal bool) *Value
+
 	// Per-set tag and filter registries (lazily initialized via initOnce)
 	tags     map[string]*tag
 	filters  map[string]FilterFunction

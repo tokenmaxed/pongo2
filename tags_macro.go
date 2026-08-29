@@ -144,7 +144,11 @@ func (node *tagMacroNode) call(ctx *ExecutionContext, args ...*Value) (*Value, e
 		return AsSafeValue(""), updateErrorToken(err, ctx.template, node.position)
 	}
 
-	return AsSafeValue(body.String()), nil
+	value := AsSafeValue(body.String())
+	if ctx.template.set.MarkValue != nil {
+		value = ctx.template.set.MarkValue(value)
+	}
+	return value, nil
 }
 
 // tagMacroParser parses the {% macro %} tag. It requires a name, argument list
