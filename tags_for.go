@@ -102,6 +102,12 @@ func (node *tagForNode) Execute(ctx *ExecutionContext, writer TemplateWriter) (f
 
 	obj.IterateOrder(func(idx, count int, key, value *Value) bool {
 		// There's something to iterate over (correct type and at least 1 item)
+		if forCtx.Meter != nil {
+			if err := forCtx.Meter.Iteration(); err != nil {
+				forError = err
+				return false
+			}
+		}
 
 		// Update loop infos and public context
 		forCtx.Private[node.key] = key

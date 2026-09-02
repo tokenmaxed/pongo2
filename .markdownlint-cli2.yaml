@@ -1,0 +1,10 @@
+# The inherited documentation tree keeps upstream's formatting. Lint the
+# fork-owned relationship document and the README changed for the module fork;
+# keep every non-line-length rule enabled there.
+config:
+  MD013: false
+ignores:
+  - CHANGELOG.md
+  - CLAUDE.md
+  - SECURITY.md
+  - docs/**

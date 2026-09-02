@@ -194,9 +194,9 @@ func (nv *nodeVariable) Execute(ctx *ExecutionContext, writer TemplateWriter) er
 
 	if !nv.expr.FilterApplied("safe") && !value.safe && value.IsString() && ctx.Autoescape {
 		// apply escape filter
-		escapeFn := ctx.template.set.filters["escape"]
-		if escapeFn != nil {
-			value, err = escapeFn(value, nil)
+		escapeFn, exists := ctx.template.set.resolveFilter("escape")
+		if exists {
+			value, err = escapeFn.execute(ctx, value, AsValue(nil))
 			if err != nil {
 				return err
 			}
@@ -346,7 +346,7 @@ func (vr *variableResolver) resolvePartByType(
 ) (reflect.Value, bool, error) {
 	switch part.typ {
 	case varTypeInt:
-		return vr.resolveIntIndex(current, part)
+		return vr.resolveIntIndex(ctx, current, part)
 	case varTypeIdent:
 		return vr.resolveIdentifier(current, part)
 	case varTypeSubscript:
@@ -357,9 +357,16 @@ func (vr *variableResolver) resolvePartByType(
 }
 
 // resolveIntIndex resolves an integer index access on a slice/array/string.
-func (vr *variableResolver) resolveIntIndex(current reflect.Value, part *variablePart) (reflect.Value, bool, error) {
+func (vr *variableResolver) resolveIntIndex(
+	ctx *ExecutionContext,
+	current reflect.Value,
+	part *variablePart,
+) (reflect.Value, bool, error) {
 	switch current.Kind() {
 	case reflect.String:
+		if err := meterStringIndexOperand(ctx, current); err != nil {
+			return reflect.Value{}, false, err
+		}
 		// For strings, return the character (rune) at the index (Django-compatible behavior)
 		runes := []rune(current.String())
 		if part.i >= 0 && len(runes) > part.i {
@@ -403,6 +410,9 @@ func (vr *variableResolver) resolveSubscript(
 
 	switch current.Kind() {
 	case reflect.String:
+		if err := meterStringIndexOperand(ctx, current); err != nil {
+			return reflect.Value{}, false, err
+		}
 		// For strings, return the character (rune) at the index (Django-compatible behavior)
 		runes := []rune(current.String())
 		si := sv.Integer()
@@ -431,6 +441,16 @@ func (vr *variableResolver) resolveSubscript(
 		return reflect.Value{}, false, fmt.Errorf("can't access an index on type %s (variable %s)",
 			current.Kind().String(), vr.String())
 	}
+}
+
+// meterStringIndexOperand reports the complete string before rune indexing
+// scans and materializes it. The final one-rune result is too small for a
+// consumer's size-weighted Meter to account for that work.
+func meterStringIndexOperand(ctx *ExecutionContext, current reflect.Value) error {
+	if ctx.Meter == nil {
+		return nil
+	}
+	return ctx.Meter.Resolved(&Value{val: current})
 }
 
 // callResult holds the result of a function call resolution.
@@ -581,7 +601,12 @@ func (vr *variableResolver) executeCall(
 func (vr *variableResolver) Evaluate(ctx *ExecutionContext) (*Value, error) {
 	value, err := vr.resolve(ctx)
 	if err != nil {
-		return AsValue(nil), ctx.Error(err.Error(), vr.locationToken)
+		return AsValue(nil), ctx.OrigError(err, vr.locationToken)
+	}
+	if ctx.Meter != nil {
+		if err := ctx.Meter.Resolved(value); err != nil {
+			return AsValue(nil), ctx.OrigError(err, vr.locationToken)
+		}
 	}
 	return value, nil
 }

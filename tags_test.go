@@ -479,6 +479,89 @@ func TestTagCycle(t *testing.T) {
 	}
 }
 
+func TestTagCycleStoresTheResolvedValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		source  string
+		context Context
+		want    string
+	}{
+		{
+			name:    "false truthiness",
+			source:  `{% cycle value as item silent %}{% if item %}true{% else %}false{% endif %}`,
+			context: Context{"value": ""},
+			want:    "false",
+		},
+		{
+			name:    "mapping field",
+			source:  `{% cycle value as item silent %}{{ item.key }}`,
+			context: Context{"value": map[string]any{"key": "stored"}},
+			want:    "stored",
+		},
+		{
+			name:    "sequence iteration",
+			source:  `{% cycle value as item silent %}{% for part in item %}[{{ part }}]{% empty %}empty{% endfor %}`,
+			context: Context{"value": []string{"one", "two"}},
+			want:    "[one][two]",
+		},
+		{
+			name:    "comparison",
+			source:  `{% cycle value as item silent %}{% if item == value %}equal{% else %}different{% endif %}`,
+			context: Context{"value": "stored"},
+			want:    "equal",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			set := NewSet(t.Name(), NewFSLoader(fstest.MapFS{}))
+			tpl, err := set.FromString(test.source)
+			if err != nil {
+				t.Fatalf("FromString: %v", err)
+			}
+			got, err := tpl.Execute(test.context)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("Execute = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestTagCycleDoesNotExposeAnInternalCarrierField(t *testing.T) {
+	set := NewSet(t.Name(), NewFSLoader(fstest.MapFS{}))
+	tpl, err := set.FromString(`{% cycle value as item silent %}{{ item.value }}`)
+	if err != nil {
+		t.Fatalf("FromString: %v", err)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("Execute panicked through an internal cycle carrier: %v", recovered)
+		}
+	}()
+	if _, err := tpl.Execute(Context{"value": "stored"}); err == nil {
+		t.Fatal("Execute succeeded, want ordinary invalid-field error")
+	}
+}
+
+func TestTagCycleNamedReferenceIsResolvedWhileParsing(t *testing.T) {
+	set := NewSet(t.Name(), NewFSLoader(fstest.MapFS{}))
+	tpl, err := set.FromString(
+		`{% cycle first second as item %}|{% cycle item %}|{{ item }}|{% cycle ordinary %}{% cycle ordinary %}`,
+	)
+	if err != nil {
+		t.Fatalf("FromString: %v", err)
+	}
+	got, err := tpl.Execute(Context{"first": "one", "second": "two", "ordinary": "x"})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "one|two|two|xx"; got != want {
+		t.Fatalf("Execute = %q, want %q", got, want)
+	}
+}
+
 func TestTagAutoescape(t *testing.T) {
 	tests := []struct {
 		name     string

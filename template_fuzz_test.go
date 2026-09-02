@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flosch/pongo2/v7"
+	"github.com/tokenmaxed/pongo2/v7"
 )
 
 // FuzzSimpleExecution fuzzes template parsing and execution.

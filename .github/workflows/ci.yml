@@ -1,0 +1,80 @@
+---
+name: CI
+
+"on":
+  pull_request:
+    branches:
+      - dev
+      - master
+  push:
+    branches:
+      - dev
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Verify dependencies and manifest
+        run: |
+          GOWORK=off go mod download all
+          GOWORK=off go mod verify
+          GOWORK=off go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Check formatting and repository text
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          empty_tree="$(git hash-object -t tree /dev/null)"
+          # Upstream's rendered-output fixtures intentionally preserve trailing
+          # spaces. Check every other tracked byte from an empty baseline.
+          git diff --check "$empty_tree" HEAD -- . \
+            ':(exclude)template_tests/*.out'
+
+      - name: Test
+        run: GOWORK=off go test -mod=readonly -count=1 ./...
+
+      - name: Race test
+        run: GOWORK=off go test -mod=readonly -race -count=1 ./...
+
+      - name: Vet
+        run: GOWORK=off go vet -mod=readonly ./...
+
+      - name: Install analysis tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/go-tools"
+          printf '%s\n' "$RUNNER_TEMP/go-tools" >>"$GITHUB_PATH"
+          GOBIN="$RUNNER_TEMP/go-tools" \
+            go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+          GOBIN="$RUNNER_TEMP/go-tools" \
+            go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      - name: Static analysis
+        run: staticcheck ./...
+
+      - name: Vulnerability analysis
+        run: govulncheck ./...

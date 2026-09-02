@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -14,6 +15,14 @@ import (
 type TemplateWriter interface {
 	io.Writer
 	WriteString(string) (int, error)
+}
+
+// ExecutionOptions configures one template execution without changing the
+// parsed Template or its TemplateSet.
+type ExecutionOptions struct {
+	// Meter observes and may bound loop iterations, live internal buffers, and
+	// macro calls. A nil Meter preserves the ordinary execution path.
+	Meter Meter
 }
 
 // templateWriter wraps an io.Writer to satisfy the TemplateWriter interface.
@@ -120,6 +129,18 @@ type Template struct {
 	whitespaceOnce sync.Once
 }
 
+// ExportedMacroNames returns the names of macros this template makes
+// available to an import. The returned slice is sorted and independent of the
+// template's internal map.
+func (tpl *Template) ExportedMacroNames() []string {
+	names := make([]string, 0, len(tpl.exportedMacros))
+	for name := range tpl.exportedMacros {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
 // newTemplateString creates a new template from a byte slice containing template source.
 // The template is marked as a string template (not file-based), which affects path
 // resolution for include/extends tags. Returns the parsed template or an error.
@@ -220,6 +241,10 @@ func (tpl *Template) applyWhitespaceOptions() {
 //
 // Returns the root parent template to execute, the execution context, and any error.
 func (tpl *Template) newContextForExecution(context Context) (*Template, *ExecutionContext, error) {
+	return tpl.newContextForExecutionWithOptions(context, ExecutionOptions{})
+}
+
+func (tpl *Template) newContextForExecutionWithOptions(context Context, options ExecutionOptions) (*Template, *ExecutionContext, error) {
 	// Apply TrimBlocks/LStripBlocks whitespace options exactly once.
 	// Using sync.Once ensures thread-safety for concurrent execution.
 	tpl.whitespaceOnce.Do(tpl.applyWhitespaceOptions)
@@ -259,7 +284,7 @@ func (tpl *Template) newContextForExecution(context Context) (*Template, *Execut
 	}
 
 	// Create operational context
-	ctx := newExecutionContext(parent, newContext)
+	ctx := newExecutionContextWithOptions(parent, newContext, options)
 
 	return parent, ctx, nil
 }
@@ -268,10 +293,15 @@ func (tpl *Template) newContextForExecution(context Context) (*Template, *Execut
 // It prepares the execution context and runs the root document node's Execute method.
 // This is the core execution path used by all public Execute* methods.
 func (tpl *Template) execute(context Context, writer TemplateWriter) error {
-	parent, ctx, err := tpl.newContextForExecution(context)
+	return tpl.executeWithOptions(context, writer, ExecutionOptions{})
+}
+
+func (tpl *Template) executeWithOptions(context Context, writer TemplateWriter, options ExecutionOptions) error {
+	parent, ctx, err := tpl.newContextForExecutionWithOptions(context, options)
 	if err != nil {
 		return err
 	}
+	defer ctx.releaseExecutionState()
 
 	// Run the selected document
 	if err := parent.root.Execute(ctx, writer); err != nil {
@@ -284,7 +314,11 @@ func (tpl *Template) execute(context Context, writer TemplateWriter) error {
 // newTemplateWriterAndExecute wraps an io.Writer in a templateWriter and executes.
 // This allows any io.Writer to be used for template output.
 func (tpl *Template) newTemplateWriterAndExecute(context Context, writer io.Writer) error {
-	return tpl.execute(context, &templateWriter{w: writer})
+	return tpl.newTemplateWriterAndExecuteWithOptions(context, writer, ExecutionOptions{})
+}
+
+func (tpl *Template) newTemplateWriterAndExecuteWithOptions(context Context, writer io.Writer, options ExecutionOptions) error {
+	return tpl.executeWithOptions(context, &templateWriter{w: writer}, options)
 }
 
 // newBufferAndExecute creates a pre-sized buffer and executes the template into it.
@@ -335,6 +369,14 @@ func (tpl *Template) ExecuteWriterUnbuffered(context Context, writer io.Writer) 
 	return tpl.newTemplateWriterAndExecute(context, writer)
 }
 
+// ExecuteWriterUnbufferedWithOptions executes the template directly into
+// writer with per-execution options. Like ExecuteWriterUnbuffered, an error may
+// leave partial output in writer. A nil options.Meter is behaviorally
+// equivalent to ExecuteWriterUnbuffered.
+func (tpl *Template) ExecuteWriterUnbufferedWithOptions(context Context, writer io.Writer, options ExecutionOptions) error {
+	return tpl.newTemplateWriterAndExecuteWithOptions(context, writer, options)
+}
+
 // ExecuteBytes executes the template and returns the rendered output as a byte slice.
 // Context can be nil for templates that don't require variables.
 // Returns nil and an error if template execution fails.
@@ -372,6 +414,9 @@ func (tpl *Template) Execute(context Context) (string, error) {
 // Returns a map where keys are block names and values are their rendered content.
 // Blocks not found in the template (or its parents) are omitted from the result.
 // The method walks up the template inheritance chain to find all requested blocks.
+// ExecuteBlocks has no ExecutionOptions variant and does not install a Meter;
+// callers that require metering must execute the full template through
+// ExecuteWriterUnbufferedWithOptions.
 func (tpl *Template) ExecuteBlocks(context Context, blocks []string) (map[string]string, error) {
 	var parents []*Template
 	result := make(map[string]string)

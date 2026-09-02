@@ -1,5 +1,50 @@
 # Changelog
 
+## v7.0.0-baseml.4
+
+### Bug Fixes
+
+- Keep already-safe `escapeseq` items unchanged, matching conditional escaping
+  while still escaping every unsafe item.
+
+## v7.0.0-baseml.3
+
+### Added
+
+- Add package-level `ApplyFilterCtx` dispatch so policy wrappers can retain a
+  built-in filter's execution-context semantics.
+
+### Security
+
+- Resolve named `cycle` references while parsing and store the raw resolved
+  value, so later output, filters, paths, comparisons, truth tests, iteration,
+  and metering all observe the same value rather than an internal carrier.
+
+### Bug Fixes
+
+- Preserve explicit and value-level safety metadata across named-cycle
+  storage, and honor already-safe values in `cycle` and `firstof`.
+- Preserve an existing `*Value` across container indexing, lookup, and
+  iteration so `safeseq` and `escapeseq` retain string type and safety.
+- Make template `join` context-aware: escape unsafe elements and separators
+  only while autoescape is enabled, and preserve already-escaped sequence
+  items without encoding their entities again.
+- Join sequences correctly when the separator is empty.
+
+## v7.0.0-baseml.2
+
+### Security
+
+- Report a complete string operand to the execution meter before dot or
+  subscript indexing scans and materializes its runes.
+
+### Bug Fixes
+
+- Route `cycle` and `firstof` autoescaping through context-aware replacement
+  filters.
+- Preserve each escaped value's safe marker in `escapeseq` results so normal
+  autoescaping does not encode the generated entities a second time.
+
 ## v7.0.0-alpha.2
 
 This release brings pongo2 significantly closer to Django template behavior.

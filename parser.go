@@ -32,10 +32,11 @@ type IEvaluator interface {
 //
 // (See Token's documentation for more about tokens)
 type Parser struct {
-	name      string
-	idx       int
-	tokens    []*Token
-	lastToken *Token
+	name        string
+	idx         int
+	tokens      []*Token
+	lastToken   *Token
+	namedCycles map[string]*tagCycleNode
 
 	// if the parser parses a template document, here will be
 	// a reference to it (needed to access the template through Tags)
@@ -47,9 +48,10 @@ type Parser struct {
 // parser for tag authors
 func newParser(name string, tokens []*Token, template *Template) *Parser {
 	p := &Parser{
-		name:     name,
-		tokens:   tokens,
-		template: template,
+		name:        name,
+		tokens:      tokens,
+		template:    template,
+		namedCycles: make(map[string]*tagCycleNode),
 	}
 	if len(tokens) > 0 {
 		p.lastToken = tokens[len(tokens)-1]
