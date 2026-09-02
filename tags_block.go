@@ -1,7 +1,6 @@
 package pongo2
 
 import (
-	"bytes"
 	"fmt"
 )
 
@@ -115,8 +114,9 @@ func (t tagBlockInformation) Super() (*Value, error) {
 	}
 
 	blockWrapper := t.wrappers[lenWrappers-1]
-	buf := bytes.NewBufferString("")
-	err := blockWrapper.Execute(superCtx, &templateWriter{buf})
+	buf := newMeteredBuffer(superCtx.Meter, 0)
+	defer buf.release()
+	err := blockWrapper.Execute(superCtx, buf)
 	if err != nil {
 		return AsSafeValue(""), err
 	}

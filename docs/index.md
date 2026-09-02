@@ -19,7 +19,7 @@ pongo2 is a Django-syntax compatible template engine for Go.
 ### Installation
 
 ```bash
-go get -u github.com/flosch/pongo2/v7
+go get -u github.com/tokenmaxed/pongo2/v7
 ```
 
 ### Hello World
@@ -29,7 +29,7 @@ package main
 
 import (
     "fmt"
-    "github.com/flosch/pongo2/v7"
+    "github.com/tokenmaxed/pongo2/v7"
 )
 
 func main() {
@@ -159,7 +159,7 @@ Current version: **7.0.0-alpha.2**
 ## Support
 
 - [GitHub Issues](https://github.com/flosch/pongo2/issues)
-- [GoDoc](https://pkg.go.dev/github.com/flosch/pongo2/v7)
+- [GoDoc](https://pkg.go.dev/github.com/tokenmaxed/pongo2/v7)
 
 ## License
 

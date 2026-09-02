@@ -143,6 +143,16 @@ type Token struct {
 	// Col is the 1-based column number where this token starts.
 	Col int
 
+	// Pos and End are the zero-based byte offsets of the token's half-open
+	// source span. The span names the original bytes even when Val is decoded
+	// or a whitespace-trimming delimiter is normalized.
+	Pos int
+	End int
+
+	// Verbatim reports that a TokenHTML came from inside a verbatim region.
+	// It is false for every other token and for ordinary HTML.
+	Verbatim bool
+
 	// TrimWhitespaces is true for whitespace-trimming delimiters ({{-, -}}, {%-, -%}).
 	// When true, adjacent whitespace in HTML content should be stripped.
 	TrimWhitespaces bool
@@ -241,8 +251,15 @@ func (t *Token) String() string {
 		typ, t.Typ, val, t.Line, t.Col, t.TrimWhitespaces)
 }
 
+// Lex tokenizes source and returns the tokens used by pongo2's parser. Token
+// spans refer to byte offsets in source; comments and verbatim delimiters are
+// omitted, leaving gaps between the surrounding tokens.
+func Lex(name, source string) ([]*Token, error) {
+	return lex(name, source)
+}
+
 // lex tokenizes the given template source string and returns a slice of tokens.
-// This is the main entry point for lexical analysis.
+// This is the internal entry point used by the parser.
 //
 // Parameters:
 //   - name: The template name/filename (used for error messages)
@@ -299,6 +316,9 @@ func (l *lexer) emit(t TokenType) {
 		Val:      l.value(),
 		Line:     l.startline,
 		Col:      l.startcol,
+		Pos:      l.start,
+		End:      l.pos,
+		Verbatim: t == TokenHTML && l.inVerbatim,
 	}
 
 	if t == TokenString {
@@ -389,6 +409,8 @@ func (l *lexer) errorf(format string, args ...any) lexerStateFn {
 		Val:      fmt.Sprintf(format, args...),
 		Line:     l.startline,
 		Col:      l.startcol,
+		Pos:      l.start,
+		End:      l.pos,
 	}
 	l.tokens = append(l.tokens, t)
 	l.errored = true
@@ -409,9 +431,9 @@ func (l *lexer) emitRemainingHTML() {
 // ignoreSingleLineComment skips over a single-line comment {# ... #}.
 // Comments are not emitted as tokens; they are completely discarded.
 // Reports an error if the comment is not closed or contains a newline.
-func (l *lexer) ignoreSingleLineComment() {
+func (l *lexer) ignoreSingleLineComment() bool {
 	if !strings.HasPrefix(l.input[l.pos:], "{#") {
-		return
+		return false
 	}
 
 	l.emitRemainingHTML()
@@ -423,10 +445,10 @@ func (l *lexer) ignoreSingleLineComment() {
 		switch l.peek() {
 		case EOF:
 			l.errorf("Single-line comment not closed.")
-			return
+			return true
 		case '\n':
 			l.errorf("Newline not permitted in a single-line comment.")
-			return
+			return true
 		}
 
 		if strings.HasPrefix(l.input[l.pos:], "#}") {
@@ -438,6 +460,7 @@ func (l *lexer) ignoreSingleLineComment() {
 		l.next()
 	}
 	l.ignore() // ignore whole comment
+	return true
 }
 
 // processVerbatimTag handles {% verbatim %} and {% endverbatim %} tags.
@@ -446,7 +469,7 @@ func (l *lexer) ignoreSingleLineComment() {
 //
 // TODO: Support verbatim tag names as per Django docs:
 // https://docs.djangoproject.com/en/dev/ref/templates/builtins/#verbatim
-func (l *lexer) processVerbatimTag() {
+func (l *lexer) processVerbatimTag() bool {
 	if l.inVerbatim {
 		// end verbatim
 		if strings.HasPrefix(l.input[l.pos:], "{% endverbatim %}") {
@@ -456,6 +479,7 @@ func (l *lexer) processVerbatimTag() {
 			l.col += w
 			l.ignore()
 			l.inVerbatim = false
+			return true
 		}
 	} else if strings.HasPrefix(l.input[l.pos:], "{% verbatim %}") { // tag
 		l.emitRemainingHTML()
@@ -464,7 +488,9 @@ func (l *lexer) processVerbatimTag() {
 		l.pos += w
 		l.col += w
 		l.ignore()
+		return true
 	}
+	return false
 }
 
 // run is the main lexer loop that processes the entire input.
@@ -475,13 +501,21 @@ func (l *lexer) processVerbatimTag() {
 // The loop terminates when EOF is reached or an error occurs.
 func (l *lexer) run() {
 	for {
-		l.processVerbatimTag()
+		// A consumed delimiter leaves the cursor at a byte that may start the
+		// next comment or verbatim region. Re-run the recognition order before
+		// consuming that byte as ordinary text. The consumed guard makes the
+		// restart incapable of spinning without progress.
+		if l.processVerbatimTag() {
+			continue
+		}
 
 		if !l.inVerbatim {
 			// Ignore single-line comments {# ... #}
-			l.ignoreSingleLineComment()
-			if l.errored {
-				return
+			if l.ignoreSingleLineComment() {
+				if l.errored {
+					return
+				}
+				continue
 			}
 
 			if strings.HasPrefix(l.input[l.pos:], "{{") || // variable

@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/flosch/pongo2/v7"
+	"github.com/tokenmaxed/pongo2/v7"
 )
 
 func TestIssue151(t *testing.T) {

@@ -46,10 +46,31 @@ type TemplateSet struct {
 	// You can change the options before calling the Execute method.
 	Options *Options
 
+	// MacroDepthLimit is the maximum number of simultaneously active macro
+	// calls. A non-positive value uses the default of 1000. Configure it before
+	// executing templates; an execution Meter, when installed, is authoritative.
+	MacroDepthLimit int
+
+	// MarkValue, when non-nil, marks values produced by macros and by each
+	// stage of a filter tag. It can preserve downstream provenance that the
+	// engine's ordinary safe bit cannot express.
+	MarkValue func(*Value) *Value
+
+	// FilterParamValue, when non-nil, marks an explicit filter-tag parameter.
+	// literal reports whether the parameter was written as a literal rather
+	// than resolved from the execution context.
+	FilterParamValue func(param *Value, literal bool) *Value
+
+	// ValidateExportedMacro, when non-nil, validates every exported macro as
+	// its defining template is parsed. It also observes templates parsed
+	// transitively by an import. Returning an error rejects the template.
+	ValidateExportedMacro func(name string) error
+
 	// Per-set tag and filter registries (lazily initialized via initOnce)
-	tags     map[string]*tag
-	filters  map[string]FilterFunction
-	initOnce sync.Once
+	tags           map[string]*tag
+	filters        map[string]FilterFunction
+	contextFilters map[string]FilterFunctionCtx
+	initOnce       sync.Once
 
 	// Sandbox features
 	// - Disallow access to specific tags and/or filters (using BanTag() and BanFilter())
@@ -94,7 +115,15 @@ func NewSet(name string, loaders ...TemplateLoader) *TemplateSet {
 		templateCache:    make(map[string]*Template),
 		templatesParsing: make(map[string]bool),
 		Options:          newOptions(),
+		MacroDepthLimit:  defaultMacroDepthLimit,
 	}
+}
+
+func (set *TemplateSet) macroDepthLimit() int {
+	if set.MacroDepthLimit <= 0 {
+		return defaultMacroDepthLimit
+	}
+	return set.MacroDepthLimit
 }
 
 func (set *TemplateSet) AddLoader(loaders ...TemplateLoader) {
@@ -129,6 +158,7 @@ func (set *TemplateSet) unmarkTemplateParsing(filename string) {
 func (set *TemplateSet) initBuiltins() {
 	set.tags = copyTags(builtinTags)
 	set.filters = copyFilters(builtinFilters)
+	set.contextFilters = copyContextFilters(builtinContextFilters)
 }
 
 func (set *TemplateSet) resolveFilename(tpl *Template, path string) string {
@@ -169,7 +199,7 @@ func (set *TemplateSet) BanTag(name string) error {
 // BanFilter bans a specific filter for this template set. See more in the documentation for TemplateSet.
 func (set *TemplateSet) BanFilter(name string) error {
 	set.initOnce.Do(set.initBuiltins)
-	_, has := set.filters[name]
+	_, has := set.resolveFilter(name)
 	if !has {
 		return fmt.Errorf("filter '%s' not found", name)
 	}
@@ -188,11 +218,25 @@ func (set *TemplateSet) BanFilter(name string) error {
 // RegisterFilter registers a new filter for this template set.
 func (set *TemplateSet) RegisterFilter(name string, fn FilterFunction) error {
 	set.initOnce.Do(set.initBuiltins)
-	_, existing := set.filters[name]
+	_, existing := set.resolveFilter(name)
 	if existing {
 		return fmt.Errorf("filter with name '%s' is already registered", name)
 	}
 	set.filters[name] = fn
+	return nil
+}
+
+// RegisterFilterCtx registers a context-aware filter for this template set.
+func (set *TemplateSet) RegisterFilterCtx(name string, fn FilterFunctionCtx) error {
+	set.initOnce.Do(set.initBuiltins)
+	if fn == nil {
+		return fmt.Errorf("filter with name '%s' has a nil function", name)
+	}
+	_, existing := set.resolveFilter(name)
+	if existing {
+		return fmt.Errorf("filter with name '%s' is already registered", name)
+	}
+	set.contextFilters[name] = fn
 	return nil
 }
 
@@ -205,11 +249,27 @@ func (set *TemplateSet) SetAutoescape(v bool) {
 // Use this function with caution since it allows you to change existing filter behaviour.
 func (set *TemplateSet) ReplaceFilter(name string, fn FilterFunction) error {
 	set.initOnce.Do(set.initBuiltins)
-	_, existing := set.filters[name]
+	_, existing := set.resolveFilter(name)
 	if !existing {
 		return fmt.Errorf("filter with name '%s' does not exist (therefore cannot be overridden)", name)
 	}
+	delete(set.contextFilters, name)
 	set.filters[name] = fn
+	return nil
+}
+
+// ReplaceFilterCtx replaces a registered filter with a context-aware one.
+func (set *TemplateSet) ReplaceFilterCtx(name string, fn FilterFunctionCtx) error {
+	set.initOnce.Do(set.initBuiltins)
+	if fn == nil {
+		return fmt.Errorf("filter with name '%s' has a nil function", name)
+	}
+	_, existing := set.resolveFilter(name)
+	if !existing {
+		return fmt.Errorf("filter with name '%s' does not exist (therefore cannot be overridden)", name)
+	}
+	delete(set.filters, name)
+	set.contextFilters[name] = fn
 	return nil
 }
 
@@ -247,7 +307,7 @@ func (set *TemplateSet) ReplaceTag(name string, parserFn TagParser) error {
 // plus any filters registered via RegisterFilter.
 func (set *TemplateSet) FilterExists(name string) bool {
 	set.initOnce.Do(set.initBuiltins)
-	_, existing := set.filters[name]
+	_, existing := set.resolveFilter(name)
 	return existing
 }
 
@@ -268,6 +328,12 @@ func (set *TemplateSet) ApplyFilter(name string, value *Value, param *Value) (*V
 	set.initOnce.Do(set.initBuiltins)
 	fn, existing := set.filters[name]
 	if !existing {
+		if _, contextOnly := set.contextFilters[name]; contextOnly {
+			return nil, &Error{
+				Sender:    "applyfilter",
+				OrigError: fmt.Errorf("filter with name '%s' requires an execution context", name),
+			}
+		}
 		return nil, &Error{
 			Sender:    "applyfilter",
 			OrigError: fmt.Errorf("filter with name '%s' not found", name),
@@ -280,6 +346,33 @@ func (set *TemplateSet) ApplyFilter(name string, value *Value, param *Value) (*V
 	}
 
 	return fn(value, param)
+}
+
+// ApplyFilterCtx applies a registered filter with an execution context.
+func (set *TemplateSet) ApplyFilterCtx(ctx *ExecutionContext, name string, value *Value, param *Value) (*Value, error) {
+	set.initOnce.Do(set.initBuiltins)
+	fn, existing := set.resolveFilter(name)
+	if !existing {
+		return nil, &Error{
+			Sender:    "applyfilter",
+			OrigError: fmt.Errorf("filter with name '%s' not found", name),
+		}
+	}
+	if param == nil {
+		param = AsValue(nil)
+	}
+	return fn.execute(ctx, value, param)
+}
+
+func (set *TemplateSet) resolveFilter(name string) (resolvedFilter, bool) {
+	if fn, existing := set.contextFilters[name]; existing {
+		return resolvedFilter{withContext: fn}, true
+	}
+	fn, existing := set.filters[name]
+	if !existing {
+		return resolvedFilter{}, false
+	}
+	return resolvedFilter{plain: fn}, true
 }
 
 // MustApplyFilter behaves like ApplyFilter, but panics on an error.
@@ -480,6 +573,12 @@ var (
 	// ReplaceFilter replaces an existing filter in the DefaultSet.
 	// Use with caution since it changes existing filter behaviour.
 	ReplaceFilter = DefaultSet.ReplaceFilter
+
+	// RegisterFilterCtx registers a context-aware filter for the DefaultSet.
+	RegisterFilterCtx = DefaultSet.RegisterFilterCtx
+
+	// ReplaceFilterCtx replaces a filter in the DefaultSet with a context-aware one.
+	ReplaceFilterCtx = DefaultSet.ReplaceFilterCtx
 
 	// RegisterTag registers a new tag for the DefaultSet.
 	// Returns an error if a tag with the same name already exists.

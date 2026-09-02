@@ -1299,8 +1299,9 @@ func TestDictsortHelperEdgeCases(t *testing.T) {
 
 	t.Run("struct with unexported fields", func(t *testing.T) {
 		type privateStruct struct {
-			Name    string
-			private int //nolint:unused
+			Name string
+			//lint:ignore U1000 the fixture needs an unexported field
+			private int
 		}
 		input := []privateStruct{
 			{Name: "Charlie"},
@@ -2532,11 +2533,8 @@ func TestFilterJoinEmptySeparator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Empty separator returns the string representation of the slice
-	// The filter returns AsValue(in.String()) which wraps the Value's String()
-	// Just verify we get a non-empty result and the code path is exercised
-	if result.IsNil() {
-		t.Error("expected non-nil result")
+	if result.String() != "abc" {
+		t.Errorf("join with empty separator = %q, want %q", result.String(), "abc")
 	}
 }
 
@@ -3783,10 +3781,16 @@ func TestFilterEscapeseq(t *testing.T) {
 		}
 
 		// Check that HTML is escaped
-		first := result.Index(0).String()
-		if !strings.Contains(first, "&lt;b&gt;") {
-			t.Errorf("first element should be escaped, got %q", first)
+		first := result.Index(0)
+		if !first.IsString() || !first.safe || !strings.Contains(first.String(), "&lt;b&gt;") {
+			t.Errorf("first element = %#v/%q, want a safe escaped string", first.Interface(), first.String())
 		}
+		result.Iterate(func(_ int, _ int, item, _ *Value) bool {
+			if !item.IsString() || !item.safe {
+				t.Errorf("iterated element = %#v, want a safe string", item.Interface())
+			}
+			return true
+		}, func() { t.Error("escaped sequence unexpectedly empty") })
 	})
 
 	t.Run("XSS prevention", func(t *testing.T) {
@@ -3894,6 +3898,18 @@ func TestFilterEscapeseq(t *testing.T) {
 		}
 	})
 
+	t.Run("safe value is not escaped again", func(t *testing.T) {
+		trusted := AsSafeValue("<b>trusted</b>")
+		result, err := filterEscapeseq(AsValue([]*Value{trusted}), nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		item := result.Index(0)
+		if item != trusted || !item.safe || item.String() != "<b>trusted</b>" {
+			t.Fatalf("safe item = %#v/%q, want unchanged safe value", item.Interface(), item.String())
+		}
+	})
+
 	t.Run("mixed content", func(t *testing.T) {
 		input := []any{"<b>bold</b>", 42, "<script>"}
 		result, err := filterEscapeseq(AsValue(input), nil)
@@ -3980,15 +3996,15 @@ func TestFilterEscapeseqViaTemplate(t *testing.T) {
 		excludes string
 	}{
 		{
-			name:     "HTML escaped with escapeseq and safe",
-			template: `{% for item in items|escapeseq %}{{ item|safe }}{% endfor %}`,
+			name:     "HTML escaped with escapeseq",
+			template: `{% for item in items|escapeseq %}{{ item }}{% endfor %}`,
 			context:  Context{"items": []string{"<b>bold</b>"}},
 			contains: "&lt;b&gt;bold&lt;/b&gt;",
 			excludes: "<b>",
 		},
 		{
 			name:     "script tag escaped",
-			template: `{% for item in items|escapeseq %}{{ item|safe }}{% endfor %}`,
+			template: `{% for item in items|escapeseq %}{{ item }}{% endfor %}`,
 			context:  Context{"items": []string{"<script>alert('xss')</script>"}},
 			contains: "&lt;script&gt;",
 			excludes: "<script>",
@@ -4012,6 +4028,103 @@ func TestFilterEscapeseqViaTemplate(t *testing.T) {
 			}
 			if tt.excludes != "" && strings.Contains(result, tt.excludes) {
 				t.Errorf("result should not contain %q, got %q", tt.excludes, result)
+			}
+		})
+	}
+}
+
+func TestFilterEscapeseqComposesWithJoin(t *testing.T) {
+	tests := []struct {
+		name           string
+		separator      any
+		wantAutoescape string
+		wantPlain      string
+	}{
+		{
+			name:           "untrusted separator",
+			separator:      "<hr>",
+			wantAutoescape: "&lt;b&gt;&lt;hr&gt;&lt;i&gt;",
+			wantPlain:      "&lt;b&gt;<hr>&lt;i&gt;",
+		},
+		{
+			name:           "safe separator",
+			separator:      AsSafeValue("<hr>"),
+			wantAutoescape: "&lt;b&gt;<hr>&lt;i&gt;",
+			wantPlain:      "&lt;b&gt;<hr>&lt;i&gt;",
+		},
+	}
+	for _, autoescape := range []bool{true, false} {
+		for _, test := range tests {
+			t.Run(fmt.Sprintf("autoescape=%t/%s", autoescape, test.name), func(t *testing.T) {
+				set := NewSet(t.Name(), &DummyLoader{})
+				set.SetAutoescape(autoescape)
+				tpl, err := set.FromString(`{{ items|escapeseq|join:separator }}`)
+				if err != nil {
+					t.Fatalf("FromString: %v", err)
+				}
+				got, err := tpl.Execute(Context{
+					"items":     []string{"<b>", "<i>"},
+					"separator": test.separator,
+				})
+				if err != nil {
+					t.Fatalf("Execute: %v", err)
+				}
+				want := test.wantPlain
+				if autoescape {
+					want = test.wantAutoescape
+				}
+				if got != want {
+					t.Fatalf("Execute = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestFilterEscapeseqPreservesSafeItemsInTemplates(t *testing.T) {
+	set := NewSet(t.Name(), &DummyLoader{})
+	set.SetAutoescape(true)
+	tpl, err := set.FromString(`{{ items|escapeseq|join:"" }}`)
+	if err != nil {
+		t.Fatalf("FromString: %v", err)
+	}
+	got, err := tpl.Execute(Context{
+		"items": []*Value{AsSafeValue("<b>trusted</b>"), AsValue("<i>unsafe</i>")},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "<b>trusted</b>&lt;i&gt;unsafe&lt;/i&gt;"; got != want {
+		t.Fatalf("Execute = %q, want %q", got, want)
+	}
+}
+
+type joinTestStringer string
+
+func (value joinTestStringer) String() string { return string(value) }
+
+func TestFilterJoinEscapesNonStringValuesByTheirRenderedText(t *testing.T) {
+	for _, autoescape := range []bool{true, false} {
+		t.Run(fmt.Sprintf("autoescape=%t", autoescape), func(t *testing.T) {
+			set := NewSet(t.Name(), &DummyLoader{})
+			set.SetAutoescape(autoescape)
+			tpl, err := set.FromString(`{{ items|join:separator }}`)
+			if err != nil {
+				t.Fatalf("FromString: %v", err)
+			}
+			got, err := tpl.Execute(Context{
+				"items":     []any{joinTestStringer("<b>"), 7},
+				"separator": "<hr>",
+			})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			want := "<b><hr>7"
+			if autoescape {
+				want = "&lt;b&gt;&lt;hr&gt;7"
+			}
+			if got != want {
+				t.Fatalf("Execute = %q, want %q", got, want)
 			}
 		})
 	}
