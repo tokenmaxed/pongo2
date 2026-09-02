@@ -38,3 +38,4 @@ small downstream commit stack keeps every divergence reviewable.
 | F8 | Meter string operands before rune indexing | Fork hook |
 | F9 | Use context-aware tag autoescape and parser-resolved named cycles | Fork integration |
 | F10 | Preserve sequence-value safety and make `join` context-aware | Downstream bug fix |
+| F11 | Preserve value-level safety across macro argument binding | Downstream bug fix |

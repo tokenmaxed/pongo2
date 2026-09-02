@@ -3,6 +3,7 @@ package pongo2_test
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/tokenmaxed/pongo2/v7"
@@ -86,5 +87,36 @@ func TestMacroResultUsesMarkValue(t *testing.T) {
 	}
 	if !slices.Equal(marks, []string{want}) {
 		t.Fatalf("MarkValue calls = %q, want [%q]", marks, want)
+	}
+}
+
+func TestMacroArgumentsPreserveSafeValues(t *testing.T) {
+	set := pongo2.NewSet("macro-safe-arguments", &pongo2.DummyLoader{})
+	set.SetAutoescape(true)
+	set.Globals["trusted"] = func() *pongo2.Value {
+		return pongo2.AsSafeValue(`<b>&</b>`)
+	}
+	tpl, err := set.FromString(strings.Join([]string{
+		`{% macro wrap(value) %}[{{ value }}]{% endmacro %}`,
+		`{% macro inner() %}<i>{{ value }}</i>{% endmacro %}`,
+		`{% macro defaulted(value=value|escape) %}[{{ value }}]{% endmacro %}`,
+		`{{ wrap(value|escape) }}`,
+		`{{ wrap(trusted()) }}`,
+		`{{ wrap(inner()) }}`,
+		`{{ defaulted() }}`,
+	}, ""))
+	if err != nil {
+		t.Fatalf("FromString: %v", err)
+	}
+	got, err := tpl.Execute(pongo2.Context{"value": `<b>&</b>`})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := `[&lt;b&gt;&amp;&lt;/b&gt;]` +
+		`[<b>&</b>]` +
+		`[<i>&lt;b&gt;&amp;&lt;/b&gt;</i>]` +
+		`[&lt;b&gt;&amp;&lt;/b&gt;]`
+	if got != want {
+		t.Fatalf("Execute = %q, want %q", got, want)
 	}
 }
