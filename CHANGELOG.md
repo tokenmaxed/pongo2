@@ -1,5 +1,12 @@
 # Changelog
 
+## v7.0.0-baseml.4
+
+### Bug Fixes
+
+- Keep already-safe `escapeseq` items unchanged, matching conditional escaping
+  while still escaping every unsafe item.
+
 ## v7.0.0-baseml.3
 
 ### Added
