@@ -88,7 +88,7 @@ func (node *tagCycleNode) Execute(ctx *ExecutionContext, writer TemplateWriter) 
 		if !t.node.silent {
 			// Apply autoescape like Django's render_value_in_context
 			if ctx.Autoescape && !item.FilterApplied("safe") && val.IsString() {
-				val, err = ctx.template.set.ApplyFilter("escape", val, nil)
+				val, err = ctx.template.set.ApplyFilterCtx(ctx, "escape", val, nil)
 				if err != nil {
 					return err
 				}
@@ -111,7 +111,7 @@ func (node *tagCycleNode) Execute(ctx *ExecutionContext, writer TemplateWriter) 
 		if !node.silent {
 			// Apply autoescape like Django's render_value_in_context
 			if ctx.Autoescape && !item.FilterApplied("safe") && val.IsString() {
-				val, err = ctx.template.set.ApplyFilter("escape", val, nil)
+				val, err = ctx.template.set.ApplyFilterCtx(ctx, "escape", val, nil)
 				if err != nil {
 					return err
 				}

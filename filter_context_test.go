@@ -102,3 +102,89 @@ func TestContextFilterErrorsPreserveIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestContextFilterRunsInAutoescapedTags(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		source  string
+		context pongo2.Context
+		want    string
+		calls   int
+	}{
+		{
+			name:    "cycle string",
+			source:  `{% cycle value %}`,
+			context: pongo2.Context{"value": "one"},
+			want:    "ctx:one",
+			calls:   1,
+		},
+		{
+			name:    "referenced cycle string",
+			source:  `{% cycle value fallback as item %}{% cycle item %}`,
+			context: pongo2.Context{"value": "one", "fallback": "two"},
+			want:    "ctx:onectx:two",
+			calls:   2,
+		},
+		{
+			name:    "cycle number",
+			source:  `{% cycle value %}`,
+			context: pongo2.Context{"value": 7},
+			want:    "7",
+			calls:   0,
+		},
+		{
+			name:    "firstof string",
+			source:  `{% firstof missing value %}`,
+			context: pongo2.Context{"value": "one"},
+			want:    "ctx:one",
+			calls:   1,
+		},
+		{
+			name:    "firstof number",
+			source:  `{% firstof missing value %}`,
+			context: pongo2.Context{"value": 7},
+			want:    "ctx:7",
+			calls:   1,
+		},
+		{
+			name:    "explicit safe bypass",
+			source:  `{% firstof missing value|safe %}`,
+			context: pongo2.Context{"value": "<b>safe</b>"},
+			want:    "<b>safe</b>",
+			calls:   0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			set := pongo2.NewSet(t.Name(), &pongo2.DummyLoader{})
+			set.SetAutoescape(true)
+			calls := 0
+			err := set.ReplaceFilterCtx("escape", func(ctx *pongo2.ExecutionContext, in, _ *pongo2.Value) (*pongo2.Value, error) {
+				calls++
+				prefix, ok := ctx.Public["prefix"].(string)
+				if !ok {
+					return nil, fmt.Errorf("execution context has no prefix")
+				}
+				return pongo2.AsSafeValue(prefix + in.String()), nil
+			})
+			if err != nil {
+				t.Fatalf("ReplaceFilterCtx: %v", err)
+			}
+			tpl, err := set.FromString(test.source)
+			if err != nil {
+				t.Fatalf("FromString: %v", err)
+			}
+			context := test.context
+			context["prefix"] = "ctx:"
+			got, err := tpl.Execute(context)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if got != test.want || calls != test.calls {
+				t.Fatalf("Execute/calls = %q/%d, want %q/%d", got, calls, test.want, test.calls)
+			}
+		})
+	}
+}
