@@ -332,7 +332,7 @@ func (v *Value) Index(i int) *Value {
 		if i < 0 || i >= rv.Len() {
 			return AsValue(nil)
 		}
-		return AsValue(rv.Index(i).Interface())
+		return valueFromReflect(rv.Index(i))
 	case reflect.String:
 		runes := []rune(rv.String())
 		if i < 0 || i >= len(runes) {
@@ -343,6 +343,27 @@ func (v *Value) Index(i int) *Value {
 		logf("Value.Index() not available for type: %s\n", rv.Kind().String())
 		return AsValue(nil)
 	}
+}
+
+// valueFromReflect preserves an existing Value's type and safety metadata
+// when a container carries *Value elements, as safeseq and escapeseq do.
+func valueFromReflect(rv reflect.Value) *Value {
+	for rv.IsValid() && rv.Kind() == reflect.Interface {
+		if rv.IsNil() {
+			return AsValue(nil)
+		}
+		rv = rv.Elem()
+	}
+	if !rv.IsValid() {
+		return AsValue(nil)
+	}
+	if rv.Type() == typeOfValuePtr && rv.CanInterface() {
+		if rv.IsNil() {
+			return AsValue(nil)
+		}
+		return rv.Interface().(*Value)
+	}
+	return &Value{val: rv}
 }
 
 // Contains checks whether the underlying value (which must be of type struct, map,
@@ -452,14 +473,14 @@ func (v *Value) GetItem(key *Value) *Value {
 
 		val := rv.MapIndex(mapKey)
 		if val.IsValid() {
-			return &Value{val: val}
+			return valueFromReflect(val)
 		}
 		return AsValue(nil)
 
 	case reflect.Struct:
 		field := rv.FieldByName(key.String())
 		if field.IsValid() {
-			return &Value{val: field}
+			return valueFromReflect(field)
 		}
 		return AsValue(nil)
 
@@ -500,7 +521,7 @@ func (v *Value) IterateOrder(fn func(idx, count int, key, value *Value) bool, em
 		keyLen := len(keys)
 		for idx, key := range keys {
 			value := rv.MapIndex(key)
-			if !fn(idx, keyLen, &Value{val: key}, &Value{val: value}) {
+			if !fn(idx, keyLen, valueFromReflect(key), valueFromReflect(value)) {
 				return
 			}
 		}
@@ -513,7 +534,7 @@ func (v *Value) IterateOrder(fn func(idx, count int, key, value *Value) bool, em
 
 		itemCount := rv.Len()
 		for i := range itemCount {
-			items = append(items, &Value{val: rv.Index(i)})
+			items = append(items, valueFromReflect(rv.Index(i)))
 		}
 
 		if sorted {

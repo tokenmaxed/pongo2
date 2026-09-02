@@ -122,6 +122,12 @@ func mustRegisterFilter(name string, fn FilterFunction) {
 	}
 }
 
+func mustRegisterFilterCtx(name string, plain FilterFunction, withContext FilterFunctionCtx) {
+	if err := registerFilterBuiltinCtx(name, plain, withContext); err != nil {
+		panic(err)
+	}
+}
+
 // htmlEscapeReplacer is a pre-compiled replacer for HTML escaping.
 // Using a single Replacer is more efficient than multiple strings.Replace calls
 // because it processes the string in a single pass.
@@ -181,7 +187,7 @@ func init() {
 	mustRegisterFilter("floatformat", filterFloatformat)
 	mustRegisterFilter("get_digit", filterGetdigit)
 	mustRegisterFilter("iriencode", filterIriencode)
-	mustRegisterFilter("join", filterJoin)
+	mustRegisterFilterCtx("join", filterJoin, filterJoinCtx)
 	mustRegisterFilter("last", filterLast)
 	mustRegisterFilter("length", filterLength)
 	mustRegisterFilter("length_is", filterLengthis)
@@ -1001,13 +1007,8 @@ func filterJoin(in *Value, param *Value) (*Value, error) {
 		return in, nil
 	}
 	sep := param.String()
-	if sep == "" {
-		// An empty string separator returns the input string.
-		return AsValue(in.String()), nil
-	}
 
 	sl := make([]string, 0, in.Len())
-
 	// This is an optimization for very long strings. Index() splits `in` into runes with each
 	// function invocation which hurts performance. Hence we're doing it just once (with ranging
 	// over the string) and speeding things up.
@@ -1017,11 +1018,59 @@ func filterJoin(in *Value, param *Value) (*Value, error) {
 		}
 	} else {
 		for i := 0; i < in.Len(); i++ {
-			sl = append(sl, in.Index(i).String())
+			item := in.Index(i)
+			sl = append(sl, item.String())
 		}
 	}
-
 	return AsValue(strings.Join(sl, sep)), nil
+}
+
+// filterJoinCtx follows Django's context-dependent join contract: while
+// autoescape is active, each unsafe item and the separator are escaped before
+// the combined result is marked safe. With autoescape disabled, their bytes
+// are joined unchanged.
+func filterJoinCtx(ctx *ExecutionContext, in *Value, param *Value) (*Value, error) {
+	if ctx == nil || !ctx.Autoescape {
+		out, err := filterJoin(in, param)
+		if err != nil || !out.IsString() {
+			return out, err
+		}
+		return AsSafeValue(out.String()), nil
+	}
+	if !in.CanSlice() {
+		return in, nil
+	}
+
+	escape := func(value *Value) (*Value, error) {
+		if value.safe {
+			return value, nil
+		}
+		return ctx.template.set.ApplyFilterCtx(ctx, "escape", value, nil)
+	}
+
+	separator, err := escape(param)
+	if err != nil {
+		return nil, err
+	}
+	parts := make([]string, 0, in.Len())
+	if in.IsString() {
+		for _, item := range in.String() {
+			value, err := escape(AsValue(string(item)))
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, value.String())
+		}
+	} else {
+		for i := 0; i < in.Len(); i++ {
+			value, err := escape(in.Index(i))
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, value.String())
+		}
+	}
+	return AsSafeValue(strings.Join(parts, separator.String())), nil
 }
 
 // filterLast returns the last element of a slice/array or the last character

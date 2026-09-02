@@ -158,7 +158,7 @@ func (set *TemplateSet) unmarkTemplateParsing(filename string) {
 func (set *TemplateSet) initBuiltins() {
 	set.tags = copyTags(builtinTags)
 	set.filters = copyFilters(builtinFilters)
-	set.contextFilters = make(map[string]FilterFunctionCtx)
+	set.contextFilters = copyContextFilters(builtinContextFilters)
 }
 
 func (set *TemplateSet) resolveFilename(tpl *Template, path string) string {

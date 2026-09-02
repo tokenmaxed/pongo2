@@ -25,6 +25,7 @@ func (filter resolvedFilter) execute(ctx *ExecutionContext, in *Value, param *Va
 }
 
 var builtinFilters = make(map[string]FilterFunction)
+var builtinContextFilters = make(map[string]FilterFunctionCtx)
 
 // copyFilters creates a shallow copy of a filter map.
 func copyFilters(src map[string]FilterFunction) map[string]FilterFunction {
@@ -33,10 +34,19 @@ func copyFilters(src map[string]FilterFunction) map[string]FilterFunction {
 	return dst
 }
 
+func copyContextFilters(src map[string]FilterFunctionCtx) map[string]FilterFunctionCtx {
+	dst := make(map[string]FilterFunctionCtx, len(src))
+	maps.Copy(dst, src)
+	return dst
+}
+
 // BuiltinFilterExists returns true if the given filter is a built-in filter.
 // Use TemplateSet.FilterExists to check filters in a specific template set.
 func BuiltinFilterExists(name string) bool {
 	_, existing := builtinFilters[name]
+	if !existing {
+		_, existing = builtinContextFilters[name]
+	}
 	return existing
 }
 
@@ -54,6 +64,20 @@ func registerFilterBuiltin(name string, fn FilterFunction) error {
 		return fmt.Errorf("filter with name '%s' is already registered", name)
 	}
 	builtinFilters[name] = fn
+	return nil
+}
+
+// registerFilterBuiltinCtx registers a built-in filter with both its legacy
+// context-free entry point and its template-execution implementation.
+func registerFilterBuiltinCtx(name string, plain FilterFunction, withContext FilterFunctionCtx) error {
+	if BuiltinFilterExists(name) {
+		return fmt.Errorf("filter with name '%s' is already registered", name)
+	}
+	if plain == nil || withContext == nil {
+		return fmt.Errorf("filter with name '%s' has a nil function", name)
+	}
+	builtinFilters[name] = plain
+	builtinContextFilters[name] = withContext
 	return nil
 }
 
@@ -85,6 +109,28 @@ func ApplyFilter(name string, value *Value, param *Value) (*Value, error) {
 	}
 
 	return fn(value, param)
+}
+
+// ApplyFilterCtx applies a built-in filter with an execution context. It is
+// the context-aware counterpart to ApplyFilter and is useful to wrappers that
+// need to retain built-in execution semantics.
+func ApplyFilterCtx(ctx *ExecutionContext, name string, value *Value, param *Value) (*Value, error) {
+	var fn resolvedFilter
+	if withContext, existing := builtinContextFilters[name]; existing {
+		fn.withContext = withContext
+	} else if plain, existing := builtinFilters[name]; existing {
+		fn.plain = plain
+	} else {
+		return nil, &Error{
+			Sender:    "applyfilter",
+			OrigError: fmt.Errorf("filter with name '%s' not found", name),
+		}
+	}
+
+	if param == nil {
+		param = AsValue(nil)
+	}
+	return fn.execute(ctx, value, param)
 }
 
 type filterCall struct {
