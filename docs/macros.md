@@ -306,6 +306,10 @@ The output is marked as safe, so HTML tags are preserved. If you need escaping, 
 {% endmacro %}
 ```
 
+Value-level safety is also preserved when escaped filter output, a nested
+macro result, or another safe `Value` is passed as an explicit or default macro
+argument.
+
 ## Best Practices
 
 ### 1. Keep Macros Focused
