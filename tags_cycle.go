@@ -1,11 +1,5 @@
 package pongo2
 
-// tagCycleValue holds the current value and state of a cycle.
-type tagCycleValue struct {
-	node  *tagCycleNode
-	value *Value
-}
-
 // tagCycleNode represents the {% cycle %} tag.
 //
 // Verified against Django 4.2 with script (autoescape behavior).
@@ -47,9 +41,16 @@ type tagCycleNode struct {
 	silent   bool
 }
 
-// String returns the string representation of the current cycle value.
-func (cv *tagCycleValue) String() string {
-	return cv.value.String()
+// preserveCycleValueSafety carries the cycle argument's safety decision into
+// later {{ name }} output. The safe filter records that decision on the
+// evaluator rather than the returned Value.
+func preserveCycleValueSafety(item IEvaluator, value *Value) *Value {
+	if value.safe || !item.FilterApplied("safe") {
+		return value
+	}
+	stored := *value
+	stored.safe = true
+	return &stored
 }
 
 // cycleIdx returns the current cycle index for this node from the execution
@@ -73,52 +74,20 @@ func (node *tagCycleNode) Execute(ctx *ExecutionContext, writer TemplateWriter) 
 		return err
 	}
 
-	if t, ok := val.Interface().(*tagCycleValue); ok {
-		// {% cycle cycleitem %} — advance the referenced cycle node
-		refIdx := t.node.cycleIdx(ctx)
-		item := t.node.args[refIdx%len(t.node.args)]
-
-		val, err := item.Evaluate(ctx)
-		if err != nil {
+	val = preserveCycleValueSafety(item, val)
+	if node.asName != "" {
+		ctx.Private[node.asName] = val
+	}
+	if !node.silent {
+		// Apply autoescape like Django's render_value_in_context.
+		if ctx.Autoescape && !val.safe && val.IsString() {
+			val, err = ctx.template.set.ApplyFilterCtx(ctx, "escape", val, nil)
+			if err != nil {
+				return err
+			}
+		}
+		if _, err := writer.WriteString(val.String()); err != nil {
 			return err
-		}
-
-		t.value = val
-
-		if !t.node.silent {
-			// Apply autoescape like Django's render_value_in_context
-			if ctx.Autoescape && !item.FilterApplied("safe") && val.IsString() {
-				val, err = ctx.template.set.ApplyFilterCtx(ctx, "escape", val, nil)
-				if err != nil {
-					return err
-				}
-			}
-			if _, err := writer.WriteString(val.String()); err != nil {
-				return err
-			}
-		}
-	} else {
-		// Regular call
-
-		cycleValue := &tagCycleValue{
-			node:  node,
-			value: val,
-		}
-
-		if node.asName != "" {
-			ctx.Private[node.asName] = cycleValue
-		}
-		if !node.silent {
-			// Apply autoescape like Django's render_value_in_context
-			if ctx.Autoescape && !item.FilterApplied("safe") && val.IsString() {
-				val, err = ctx.template.set.ApplyFilterCtx(ctx, "escape", val, nil)
-				if err != nil {
-					return err
-				}
-			}
-			if _, err := writer.WriteString(val.String()); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -130,6 +99,15 @@ func (node *tagCycleNode) Execute(ctx *ExecutionContext, writer TemplateWriter) 
 // to suppress output.
 // HINT: We're not supporting the old comma-separated list of expressions argument-style
 func tagCycleParser(doc *Parser, start *Token, arguments *Parser) (INodeTag, error) {
+	if arguments.Remaining() == 1 {
+		if name := arguments.PeekType(TokenIdentifier); name != nil {
+			if referenced, exists := doc.namedCycles[name.Val]; exists {
+				arguments.Consume()
+				return referenced, nil
+			}
+		}
+	}
+
 	cycleNode := &tagCycleNode{
 		position: start,
 	}
@@ -165,6 +143,9 @@ func tagCycleParser(doc *Parser, start *Token, arguments *Parser) (INodeTag, err
 
 	if len(cycleNode.args) == 0 {
 		return nil, arguments.Error("'cycle' tag requires at least one argument.", nil)
+	}
+	if cycleNode.asName != "" {
+		doc.namedCycles[cycleNode.asName] = cycleNode
 	}
 
 	return cycleNode, nil
