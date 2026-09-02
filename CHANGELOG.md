@@ -1,5 +1,19 @@
 # Changelog
 
+## v7.0.0-baseml.2
+
+### Security
+
+- Report a complete string operand to the execution meter before dot or
+  subscript indexing scans and materializes its runes.
+
+### Bug Fixes
+
+- Route `cycle` and `firstof` autoescaping through context-aware replacement
+  filters.
+- Preserve each escaped value's safe marker in `escapeseq` results so normal
+  autoescaping does not encode the generated entities a second time.
+
 ## v7.0.0-alpha.2
 
 This release brings pongo2 significantly closer to Django template behavior.

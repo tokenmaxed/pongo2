@@ -35,3 +35,6 @@ small downstream commit stack keeps every divergence reviewable.
 | F5 | Resolve filters; mark values | Ban fix: [flosch/pongo2#384](https://github.com/flosch/pongo2/pull/384); hooks are policy |
 | F6 | Add resolved-value/context hooks | Fork hook |
 | F7 | Fix `urlize` escaping and mail passes | [flosch/pongo2#383](https://github.com/flosch/pongo2/pull/383) |
+| F8 | Meter string operands before rune indexing | Fork hook |
+| F9 | Use context-aware filters when tags autoescape | Fork integration |
+| F10 | Preserve `escapeseq` item safety | Downstream bug fix |
