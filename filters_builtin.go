@@ -2566,6 +2566,10 @@ func filterEscapeseq(in *Value, param *Value) (*Value, error) {
 		} else {
 			item = key
 		}
+		if item.safe {
+			result = append(result, item)
+			return true
+		}
 		escaped, _ := filterEscape(item, nil)
 		result = append(result, escaped)
 		return true

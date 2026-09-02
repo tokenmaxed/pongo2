@@ -3898,6 +3898,18 @@ func TestFilterEscapeseq(t *testing.T) {
 		}
 	})
 
+	t.Run("safe value is not escaped again", func(t *testing.T) {
+		trusted := AsSafeValue("<b>trusted</b>")
+		result, err := filterEscapeseq(AsValue([]*Value{trusted}), nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		item := result.Index(0)
+		if item != trusted || !item.safe || item.String() != "<b>trusted</b>" {
+			t.Fatalf("safe item = %#v/%q, want unchanged safe value", item.Interface(), item.String())
+		}
+	})
+
 	t.Run("mixed content", func(t *testing.T) {
 		input := []any{"<b>bold</b>", 42, "<script>"}
 		result, err := filterEscapeseq(AsValue(input), nil)
@@ -4066,6 +4078,24 @@ func TestFilterEscapeseqComposesWithJoin(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestFilterEscapeseqPreservesSafeItemsInTemplates(t *testing.T) {
+	set := NewSet(t.Name(), &DummyLoader{})
+	set.SetAutoescape(true)
+	tpl, err := set.FromString(`{{ items|escapeseq|join:"" }}`)
+	if err != nil {
+		t.Fatalf("FromString: %v", err)
+	}
+	got, err := tpl.Execute(Context{
+		"items": []*Value{AsSafeValue("<b>trusted</b>"), AsValue("<i>unsafe</i>")},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "<b>trusted</b>&lt;i&gt;unsafe&lt;/i&gt;"; got != want {
+		t.Fatalf("Execute = %q, want %q", got, want)
 	}
 }
 
