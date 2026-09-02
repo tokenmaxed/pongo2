@@ -34,6 +34,19 @@ type recordingMeter struct {
 	peakMacros   int
 }
 
+type rejectingResolvedValueMeter struct {
+	recordingMeter
+	rejected string
+}
+
+func (meter *rejectingResolvedValueMeter) Resolved(value *Value) error {
+	meter.resolvedCalls++
+	if value.String() == meter.rejected {
+		return errMeterStopped
+	}
+	return nil
+}
+
 func (meter *recordingMeter) Iteration() error {
 	meter.iterationCalls++
 	return meter.iterationErr
@@ -356,5 +369,25 @@ func TestMeterResolvedCoversLoopSubjectAndItems(t *testing.T) {
 	if output != "ab" || meter.iterationCalls != 2 || meter.resolvedCalls != 3 {
 		t.Fatalf("output/iterations/resolved = %q/%d/%d, want ab/2/3",
 			output, meter.iterationCalls, meter.resolvedCalls)
+	}
+}
+
+func TestMeterResolvedSeesStringIndexOperands(t *testing.T) {
+	const operand = "a string whose indexed result is smaller than its source"
+	for name, source := range map[string]string{
+		"dot index": `{{ value.0 }}`,
+		"subscript": `{{ value[0] }}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tpl := templateFromSource(t, source)
+			meter := &rejectingResolvedValueMeter{rejected: operand}
+			output, err := executeWithMeter(t, tpl, Context{"value": operand}, meter)
+			if !errors.Is(err, errMeterStopped) {
+				t.Fatalf("Execute error = %v, want operand meter error", err)
+			}
+			if output != "" || meter.resolvedCalls != 1 {
+				t.Fatalf("output/resolved calls = %q/%d, want empty/1", output, meter.resolvedCalls)
+			}
+		})
 	}
 }

@@ -5,11 +5,12 @@ import "bytes"
 // Meter observes and may bound work performed by one template execution.
 //
 // Iteration is called before each for-loop iteration. Resolved is called after
-// each variable resolution and for a filter tag's rendered block. Charge is
-// called before pongo2 retains n additional bytes in an internal construct
-// buffer; a successful charge is paired with Release when those bytes are no
-// longer retained. EnterMacro is called before each macro body; a successful
-// entry is paired with LeaveMacro when the call returns.
+// each variable resolution, before resolver-internal work scans a string
+// operand, and for a filter tag's rendered block. Charge is called before
+// pongo2 retains n additional bytes in an internal construct buffer; a
+// successful charge is paired with Release when those bytes are no longer
+// retained. EnterMacro is called before each macro body; a successful entry is
+// paired with LeaveMacro when the call returns.
 //
 // Returning an error from Iteration, Resolved, Charge, or EnterMacro aborts
 // execution. A failed Charge reserves no bytes, and a failed EnterMacro does
