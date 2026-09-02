@@ -2509,7 +2509,7 @@ func filterEscapeseq(in *Value, param *Value) (*Value, error) {
 		return in, nil
 	}
 
-	var result []string
+	var result []*Value
 	in.Iterate(func(idx, count int, key, value *Value) bool {
 		var item *Value
 		if value != nil {
@@ -2518,7 +2518,7 @@ func filterEscapeseq(in *Value, param *Value) (*Value, error) {
 			item = key
 		}
 		escaped, _ := filterEscape(item, nil)
-		result = append(result, escaped.String())
+		result = append(result, escaped)
 		return true
 	}, func() {})
 

@@ -3981,15 +3981,15 @@ func TestFilterEscapeseqViaTemplate(t *testing.T) {
 		excludes string
 	}{
 		{
-			name:     "HTML escaped with escapeseq and safe",
-			template: `{% for item in items|escapeseq %}{{ item|safe }}{% endfor %}`,
+			name:     "HTML escaped with escapeseq",
+			template: `{% for item in items|escapeseq %}{{ item }}{% endfor %}`,
 			context:  Context{"items": []string{"<b>bold</b>"}},
 			contains: "&lt;b&gt;bold&lt;/b&gt;",
 			excludes: "<b>",
 		},
 		{
 			name:     "script tag escaped",
-			template: `{% for item in items|escapeseq %}{{ item|safe }}{% endfor %}`,
+			template: `{% for item in items|escapeseq %}{{ item }}{% endfor %}`,
 			context:  Context{"items": []string{"<script>alert('xss')</script>"}},
 			contains: "&lt;script&gt;",
 			excludes: "<script>",
