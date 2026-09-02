@@ -9,6 +9,10 @@ import (
 	"github.com/tokenmaxed/pongo2/v7"
 )
 
+type macroProfile struct {
+	Name string
+}
+
 func TestFilterTagValueHooks(t *testing.T) {
 	set := pongo2.NewSet("hooks", &pongo2.DummyLoader{})
 	var marks []string
@@ -118,5 +122,38 @@ func TestMacroArgumentsPreserveSafeValues(t *testing.T) {
 		`[&lt;b&gt;&amp;&lt;/b&gt;]`
 	if got != want {
 		t.Fatalf("Execute = %q, want %q", got, want)
+	}
+}
+
+func TestMacroArgumentsRetainCallTimeSnapshots(t *testing.T) {
+	set := pongo2.NewSet("macro-argument-snapshots", &pongo2.DummyLoader{})
+	items := []string{"slice-before"}
+	person := &macroProfile{Name: "field-before"}
+	values := map[string]string{"key": "map-before"}
+	set.Globals["mutate"] = func() string {
+		items[0] = "slice-after"
+		person.Name = "field-after"
+		values["key"] = "map-after"
+		return ""
+	}
+	tpl, err := set.FromString(
+		`{% macro use(item,name,values) %}` +
+			`{{ mutate() }}{{ item }}|{{ name }}|{{ values.key }}` +
+			`{% endmacro %}{{ use(items.0,person.Name,values) }}`,
+	)
+	if err != nil {
+		t.Fatalf("FromString: %v", err)
+	}
+	got, err := tpl.Execute(pongo2.Context{
+		"items": items, "person": person, "values": values,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "slice-before|field-before|map-after"; got != want {
+		t.Fatalf("Execute = %q, want %q", got, want)
+	}
+	if items[0] != "slice-after" || person.Name != "field-after" || values["key"] != "map-after" {
+		t.Fatalf("mutations did not reach source values: %q / %q / %q", items[0], person.Name, values["key"])
 	}
 }

@@ -115,9 +115,9 @@ func (node *tagMacroNode) call(ctx *ExecutionContext, args ...*Value) (*Value, e
 				return AsSafeValue(""), err
 			}
 
-			// Keep the Value wrapper so its safe bit survives lookup in the
-			// macro's private context.
-			argsCtx[k] = valueExpr
+			// Keep a detached Value so safety survives lookup without retaining
+			// an addressable scalar from the caller's expression.
+			argsCtx[k] = valueExpr.snapshot()
 		}
 	}
 
@@ -137,8 +137,9 @@ func (node *tagMacroNode) call(ctx *ExecutionContext, args ...*Value) (*Value, e
 
 	for idx, argValue := range args {
 		// variableResolver explicitly unwraps *Value and carries its safe bit
-		// into the value rendered by the macro body.
-		macroCtx.Private[node.argsOrder[idx]] = argValue
+		// into the value rendered by the macro body. Snapshot first to retain
+		// the existing call-time semantics of scalar arguments.
+		macroCtx.Private[node.argsOrder[idx]] = argValue.snapshot()
 	}
 
 	body := newMeteredBuffer(macroCtx.Meter, 0)

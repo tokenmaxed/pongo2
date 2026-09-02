@@ -5,7 +5,8 @@
 ### Bug Fixes
 
 - Preserve value-level safety metadata on explicit and default macro
-  arguments, including escaped filter output and nested macro results.
+  arguments, including escaped filter output and nested macro results, while
+  retaining call-time snapshots of scalar expression results.
 
 ## v7.0.0-baseml.4
 
