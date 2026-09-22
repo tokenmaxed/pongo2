@@ -162,7 +162,7 @@ type Token struct {
 // Each state function processes input and returns the next state to enter,
 // or nil to terminate lexing. This pattern enables clean separation of
 // lexing logic for different token types (strings, numbers, identifiers, etc.).
-type lexerStateFn func() lexerStateFn
+type lexerStateFn func(*lexer) lexerStateFn
 
 // lexer implements a state-machine based tokenizer for pongo2 templates.
 // It scans the input string character by character, identifying template
@@ -214,6 +214,17 @@ type lexer struct {
 	// inVerbatim is true when inside a {% verbatim %} block.
 	// In verbatim mode, template tags are treated as raw HTML.
 	inVerbatim bool
+
+	// counter is non-nil only for CountTokens. Ordinary lexing keeps emitting
+	// its original tokens and does not install a reservation policy.
+	counter *lexerCounter
+}
+
+type lexerCounter struct {
+	reserve func(sourceBytes, tokens int) error
+	bytes   int
+	tokens  int
+	err     error
 }
 
 // String returns a human-readable representation of the token for debugging.
@@ -256,6 +267,73 @@ func (t *Token) String() string {
 // omitted, leaving gaps between the surrounding tokens.
 func Lex(name, source string) ([]*Token, error) {
 	return lex(name, source)
+}
+
+// CountTokens counts the tokens Lex would return, using the same lexical state
+// machine without allocating tokens, a token slice, or decoded token values.
+// It uses constant auxiliary storage, independent of source length and count.
+// It does not parse or retain source after returning.
+//
+// If reserve is non-nil, it is called before accepting newly traversed source
+// bytes and before counting each token. The nonnegative arguments are deltas:
+// a source byte is charged once even when the lexer peeks or backs up. On a
+// successful scan their sums are len(source) and the returned count. The lexer
+// also calls reserve(0, 0) at entry, including for empty source. Callers may use
+// the callback to reserve work and poll cancellation. Long tokenless regions
+// still call it for each rune; delimiter advances have fixed bounded size.
+// Rune decoding and delimiter recognition may inspect bounded lookahead before
+// reservation. Callback behavior and costs are the caller's responsibility.
+//
+// The first callback error stops the scan and is returned unchanged. Lexical
+// errors have the same type, position and message as Lex. On either failure,
+// the count includes only tokens accepted before the error (no error token).
+// A nil callback performs an unbounded count. Lex and parser defaults are
+// unaffected; callers must separately reserve any subsequent lexing/parsing.
+func CountTokens(name, source string, reserve func(sourceBytes, tokens int) error) (int, error) {
+	counter := lexerCounter{reserve: reserve}
+	l := lexer{
+		name: name, input: source, line: 1, col: 1, startline: 1, startcol: 1,
+		counter: &counter,
+	}
+	if reserve != nil {
+		if err := reserve(0, 0); err != nil {
+			return 0, err
+		}
+	}
+	l.run()
+	return counter.tokens, counter.err
+}
+
+// countReserve admits only new source bytes, or one token. No count-mode
+// callback runs again once a failure has been observed.
+func (l *lexer) countReserve(end, tokens int) bool {
+	c := l.counter
+	if c == nil {
+		return true
+	}
+	if l.errored {
+		return false
+	}
+	bytes := max(0, end-c.bytes)
+	if c.reserve != nil && (bytes != 0 || tokens != 0) {
+		if err := c.reserve(bytes, tokens); err != nil {
+			c.err = err
+			l.errored = true
+			return false
+		}
+	}
+	c.bytes += bytes
+	c.tokens += tokens
+	return true
+}
+
+// advance admits a delimiter before moving the cursor. next handles runes.
+func (l *lexer) advance(bytes int) bool {
+	if !l.countReserve(l.pos+bytes, 0) {
+		return false
+	}
+	l.pos += bytes
+	return true
 }
 
 // lex tokenizes the given template source string and returns a slice of tokens.
@@ -310,6 +388,12 @@ func (l *lexer) length() int {
 //   - TokenSymbol: Whitespace-trimming symbols ({{-, -}}, {%-, -%}) have
 //     TrimWhitespaces set to true and the "-" is removed from Val
 func (l *lexer) emit(t TokenType) {
+	if l.counter != nil {
+		if l.countReserve(l.pos, 1) {
+			l.ignore()
+		}
+		return
+	}
 	tok := &Token{
 		Filename: l.name,
 		Typ:      t,
@@ -342,11 +426,15 @@ func (l *lexer) emit(t TokenType) {
 // Updates pos and col to reflect the new position.
 // The width of the rune is stored for use by backup().
 func (l *lexer) next() rune {
-	if l.pos >= len(l.input) {
+	if l.errored || l.pos >= len(l.input) {
 		l.width = 0
 		return EOF
 	}
 	r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+	if l.counter != nil && !l.countReserve(l.pos+w, 0) {
+		l.width = 0
+		return EOF
+	}
 	l.width = w
 	l.pos += l.width
 	l.col++
@@ -403,6 +491,17 @@ func (l *lexer) acceptRun(what string) {
 // Creates a TokenError with the formatted message and sets the errored flag.
 // Always returns nil to signal that lexing should stop.
 func (l *lexer) errorf(format string, args ...any) lexerStateFn {
+	if l.errored {
+		return nil
+	}
+	if l.counter != nil {
+		l.counter.err = &Error{
+			Filename: l.name, Line: l.startline, Column: l.startcol,
+			Sender: "lexer", OrigError: fmt.Errorf(format, args...),
+		}
+		l.errored = true
+		return nil
+	}
 	t := &Token{
 		Filename: l.name,
 		Typ:      TokenError,
@@ -438,7 +537,9 @@ func (l *lexer) ignoreSingleLineComment() bool {
 
 	l.emitRemainingHTML()
 
-	l.pos += 2 // pass '{#'
+	if !l.advance(2) { // pass '{#'
+		return true
+	}
 	l.col += 2
 
 	for {
@@ -452,7 +553,9 @@ func (l *lexer) ignoreSingleLineComment() bool {
 		}
 
 		if strings.HasPrefix(l.input[l.pos:], "#}") {
-			l.pos += 2 // pass '#}'
+			if !l.advance(2) { // pass '#}'
+				return true
+			}
 			l.col += 2
 			break
 		}
@@ -475,7 +578,9 @@ func (l *lexer) processVerbatimTag() bool {
 		if strings.HasPrefix(l.input[l.pos:], "{% endverbatim %}") {
 			l.emitRemainingHTML()
 			w := len("{% endverbatim %}")
-			l.pos += w
+			if !l.advance(w) {
+				return true
+			}
 			l.col += w
 			l.ignore()
 			l.inVerbatim = false
@@ -485,7 +590,9 @@ func (l *lexer) processVerbatimTag() bool {
 		l.emitRemainingHTML()
 		l.inVerbatim = true
 		w := len("{% verbatim %}")
-		l.pos += w
+		if !l.advance(w) {
+			return true
+		}
 		l.col += w
 		l.ignore()
 		return true
@@ -500,7 +607,7 @@ func (l *lexer) processVerbatimTag() bool {
 //
 // The loop terminates when EOF is reached or an error occurs.
 func (l *lexer) run() {
-	for {
+	for !l.errored {
 		// A consumed delimiter leaves the cursor at a byte that may start the
 		// next comment or verbatim region. Re-run the recognition order before
 		// consuming that byte as ordinary text. The consumed guard makes the
@@ -553,8 +660,8 @@ func (l *lexer) run() {
 // Called when {{ or {% is encountered to tokenizeTemplateCode the contents. Starts in
 // stateCode and continues until a terminal state (nil) is reached.
 func (l *lexer) tokenizeTemplateCode() {
-	for state := l.stateCode; state != nil; {
-		state = state()
+	for state := lexerStateFn((*lexer).stateCode); state != nil && !l.errored; {
+		state = state(l)
 	}
 }
 
@@ -565,7 +672,7 @@ func (l *lexer) tokenizeTemplateCode() {
 // Returns nil when a closing delimiter (}}, %}. -}}, -%}) is encountered.
 func (l *lexer) stateCode() lexerStateFn {
 outer_loop:
-	for {
+	for !l.errored {
 		switch {
 		case l.accept(tokenSpaceChars):
 			if l.value() == "\n" {
@@ -574,17 +681,19 @@ outer_loop:
 			l.ignore()
 			continue
 		case l.accept(tokenIdentifierChars):
-			return l.stateIdentifier
+			return (*lexer).stateIdentifier
 		case l.accept(tokenDigits):
-			return l.stateNumber
+			return (*lexer).stateNumber
 		case l.accept(`"'`):
-			return l.stateString
+			return (*lexer).stateString
 		}
 
 		// Check for symbol
 		for _, sym := range TokenSymbols {
 			if strings.HasPrefix(l.input[l.start:], sym) {
-				l.pos += len(sym)
+				if !l.advance(len(sym)) {
+					return nil
+				}
 				l.col += l.length()
 				l.emit(TokenSymbol)
 
@@ -611,13 +720,19 @@ outer_loop:
 func (l *lexer) stateIdentifier() lexerStateFn {
 	l.acceptRun(tokenIdentifierChars)
 	l.acceptRun(tokenIdentifierCharsWithDigits)
+	// Counting does not need keyword classification. Avoid hashing a long
+	// identifier a second time after its incremental scan.
+	if l.counter != nil {
+		l.emit(TokenIdentifier)
+		return (*lexer).stateCode
+	}
 	val := l.value()
 	if _, isKeyword := tokenKeywordsMap[val]; isKeyword {
 		l.emit(TokenKeyword)
-		return l.stateCode
+		return (*lexer).stateCode
 	}
 	l.emit(TokenIdentifier)
-	return l.stateCode
+	return (*lexer).stateCode
 }
 
 // stateNumber lexes a numeric literal token.
@@ -651,7 +766,7 @@ func (l *lexer) stateNumber() lexerStateFn {
 		}
 	*/
 	l.emit(TokenNumber)
-	return l.stateCode
+	return (*lexer).stateCode
 }
 
 // stateString lexes a quoted string literal.
@@ -684,5 +799,5 @@ func (l *lexer) stateString() lexerStateFn {
 	l.next()
 	l.ignore()
 
-	return l.stateCode
+	return (*lexer).stateCode
 }
