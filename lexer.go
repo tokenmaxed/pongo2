@@ -329,7 +329,7 @@ func (l *lexer) countReserve(end, tokens int) bool {
 
 // advance admits a delimiter before moving the cursor. next handles runes.
 func (l *lexer) advance(bytes int) bool {
-	if !l.countReserve(l.pos+bytes, 0) {
+	if l.counter != nil && !l.countReserve(l.pos+bytes, 0) {
 		return false
 	}
 	l.pos += bytes
@@ -426,11 +426,11 @@ func (l *lexer) emit(t TokenType) {
 // Updates pos and col to reflect the new position.
 // The width of the rune is stored for use by backup().
 func (l *lexer) next() rune {
-	if l.errored || l.pos >= len(l.input) {
+	if l.pos >= len(l.input) {
 		l.width = 0
 		return EOF
 	}
-	r, w := utf8.DecodeRuneInString(l.input[l.pos:])
+	r, w := l.decodeRune()
 	if l.counter != nil && !l.countReserve(l.pos+w, 0) {
 		l.width = 0
 		return EOF
@@ -439,6 +439,15 @@ func (l *lexer) next() rune {
 	l.pos += l.width
 	l.col++
 	return r
+}
+
+// Both modes use the same cursor and decoder. The ASCII case avoids a full UTF-8
+// decoder call for the repeated peeks used by the template states.
+func (l *lexer) decodeRune() (rune, int) {
+	if value := l.input[l.pos]; value < utf8.RuneSelf {
+		return rune(value), 1
+	}
+	return utf8.DecodeRuneInString(l.input[l.pos:])
 }
 
 // backup steps back one rune in the input.
@@ -607,12 +616,15 @@ func (l *lexer) processVerbatimTag() bool {
 //
 // The loop terminates when EOF is reached or an error occurs.
 func (l *lexer) run() {
-	for !l.errored {
+	for {
 		// A consumed delimiter leaves the cursor at a byte that may start the
 		// next comment or verbatim region. Re-run the recognition order before
 		// consuming that byte as ordinary text. The consumed guard makes the
 		// restart incapable of spinning without progress.
 		if l.processVerbatimTag() {
+			if l.errored {
+				return
+			}
 			continue
 		}
 
@@ -672,7 +684,7 @@ func (l *lexer) tokenizeTemplateCode() {
 // Returns nil when a closing delimiter (}}, %}. -}}, -%}) is encountered.
 func (l *lexer) stateCode() lexerStateFn {
 outer_loop:
-	for !l.errored {
+	for {
 		switch {
 		case l.accept(tokenSpaceChars):
 			if l.value() == "\n" {

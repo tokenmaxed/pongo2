@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 var countSeeds = []string{
@@ -23,7 +24,30 @@ var countSeeds = []string{
 	"{{ \"line\nbreak\" }}", `{{ 'unterminated`, `{{ 123abc _abc123 123 123.4 }}`,
 	`{{ == >= <= && || != <> ( ) + - * / ^ , . ! | : = % [ ] }}`,
 	"{{\n}}", "{{ a\f{% x %}", "{{", "{%-", "{{{% endcomment %}}}",
+	"{{ \"\xff\xc0\x80α\xf0\x9f\" }}", "\x00\x7f\x80\xc0\xe0\xf0\xff",
 	`{% comment %}{# {% endcomment %} #}{{{% endcomment %}}}`,
+}
+
+func TestLexerDecoderMatchesUTF8(t *testing.T) {
+	var source strings.Builder
+	for value := range 256 {
+		source.WriteByte(byte(value))
+	}
+	source.WriteString("α世界😀\xff\xc0\x80\xe0\x80\x80\xf4\x90\x80\x80\xf0\x9f")
+	input := source.String()
+	// Include every byte offset, including inside multibyte runes, and every
+	// truncated suffix. The shared cursor must retain the original decoder's
+	// treatment of invalid UTF-8 as well as ordinary ASCII.
+	for end := 1; end <= len(input); end++ {
+		for pos := 0; pos < end; pos++ {
+			l := lexer{input: input[:end], pos: pos}
+			got, width := l.decodeRune()
+			want, wantWidth := utf8.DecodeRuneInString(input[pos:end])
+			if got != want || width != wantWidth {
+				t.Fatalf("decode [%d:%d] = (%U,%d), want (%U,%d)", pos, end, got, width, want, wantWidth)
+			}
+		}
+	}
 }
 
 func sameLexError(t *testing.T, got, want error) {

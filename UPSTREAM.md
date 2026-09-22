@@ -79,3 +79,11 @@ Review any corpus/fingerprint change alongside the intentional lexical delta;
 do not simply update the fingerprint to make a failing parity check pass.
 The corpus and checks ship in the module; they require no private audit files
 or network oracle.
+
+The shared cursor handles ASCII directly and delegates every non-ASCII byte to
+`utf8.DecodeRuneInString`, preserving its invalid-byte behavior. This small
+fast path offsets optional-reservation checks on repeated peeks. Both count
+and token modes still use the same cursor and states.
+`TestLexerDecoderMatchesUTF8` checks byte values, offsets and truncated inputs
+against the original decoder. Ordinary `Lex` benchmarks accompany changes to
+this hot path, separately from count-mode allocation evidence.
