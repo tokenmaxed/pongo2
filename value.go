@@ -36,6 +36,16 @@ func AsSafeValue(i any) *Value {
 	}
 }
 
+// snapshot detaches an addressable reflected scalar while retaining the
+// dynamic value and its safety metadata. Reference values keep the same
+// shallow aliasing that Interface provided before the wrapper was retained.
+func (v *Value) snapshot() *Value {
+	if v == nil {
+		return nil
+	}
+	return &Value{val: reflect.ValueOf(v.Interface()), safe: v.safe}
+}
+
 func (v *Value) getResolvedValue() reflect.Value {
 	rv := v.val
 	// Unwrap pointers and interfaces to get to the underlying value

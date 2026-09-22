@@ -38,3 +38,52 @@ small downstream commit stack keeps every divergence reviewable.
 | F8 | Meter string operands before rune indexing | Fork hook |
 | F9 | Use context-aware tag autoescape and parser-resolved named cycles | Fork integration |
 | F10 | Preserve sequence-value safety and make `join` context-aware | Downstream bug fix |
+| F11 | Preserve value-level safety across macro argument binding | Downstream bug fix |
+| F12 | Count tokens with bounded source/token reservations in the same lexer | Fork hook |
+
+## Count-only lexical admission
+
+`CountTokens(name, source, reserve)` is an additive preflight hook for callers
+that need to reserve later lexical/parser allocations. It shares the lexer
+state machine used by `Lex` and template construction. It emits no tokens,
+token slice, decoded strings or AST. Lexer states use method expressions so
+state transitions also avoid per-token closure allocation. It has constant
+auxiliary storage; only a lexical error needs its bounded error objects.
+
+The optional callback receives incremental source-byte and token deltas before
+admission. Peeking does not charge a source byte twice. Source scanning calls
+it while advancing through long text, comments, verbatim regions, identifiers
+and strings, even where no token has yet been emitted. It also polls once at
+entry, including empty input. Rune decoding and fixed delimiter recognition
+can inspect bounded lookahead before reservation. A callback's first error is
+returned unchanged, so callers can enforce their own work and context policy.
+Already consumed work is not refunded. Lexical errors reached within admitted
+work keep the same error type, message and position as `Lex`.
+
+The hook owns no filesystem, source snapshot, cache, compilation budget or
+retention policy. It does not reserve or perform a later real parse. A nil
+callback provides an unbounded count; `Lex` and parser defaults are unchanged.
+The maximum token count is bounded by the source byte length: each counted
+token consumes at least one source byte, including the delimiters of an empty
+quoted string. Count arithmetic therefore fits the source's `int` length.
+
+This modification is based on fork `v7.0.0-baseml.5`, commit
+`5a02867cd320f2009b4e304f3f4effb3b9c78c1e`, with the original MIT license
+preserved in `LICENSE`. Its lexer already includes downstream F1/F2 decisions
+on restart, trim markers, source spans and verbatim provenance; none is changed.
+Before upgrading the lexer, run `TestCountTokensDifferential`, the
+`FuzzCountTokens` target, resource/cancellation tests and the native suite.
+`TestLexPinnedCorpusFingerprint` records every original public token field and
+lexical error across the checked-in template corpus at that exact revision.
+Review any corpus/fingerprint change alongside the intentional lexical delta;
+do not simply update the fingerprint to make a failing parity check pass.
+The corpus and checks ship in the module; they require no private audit files
+or network oracle.
+
+The shared cursor handles ASCII directly and delegates every non-ASCII byte to
+`utf8.DecodeRuneInString`, preserving its invalid-byte behavior. This small
+fast path offsets optional-reservation checks on repeated peeks. Both count
+and token modes still use the same cursor and states.
+`TestLexerDecoderMatchesUTF8` checks byte values, offsets and truncated inputs
+against the original decoder. Ordinary `Lex` benchmarks accompany changes to
+this hot path, separately from count-mode allocation evidence.

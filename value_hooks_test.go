@@ -3,10 +3,15 @@ package pongo2_test
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/tokenmaxed/pongo2/v7"
 )
+
+type macroProfile struct {
+	Name string
+}
 
 func TestFilterTagValueHooks(t *testing.T) {
 	set := pongo2.NewSet("hooks", &pongo2.DummyLoader{})
@@ -86,5 +91,69 @@ func TestMacroResultUsesMarkValue(t *testing.T) {
 	}
 	if !slices.Equal(marks, []string{want}) {
 		t.Fatalf("MarkValue calls = %q, want [%q]", marks, want)
+	}
+}
+
+func TestMacroArgumentsPreserveSafeValues(t *testing.T) {
+	set := pongo2.NewSet("macro-safe-arguments", &pongo2.DummyLoader{})
+	set.SetAutoescape(true)
+	set.Globals["trusted"] = func() *pongo2.Value {
+		return pongo2.AsSafeValue(`<b>&</b>`)
+	}
+	tpl, err := set.FromString(strings.Join([]string{
+		`{% macro wrap(value) %}[{{ value }}]{% endmacro %}`,
+		`{% macro inner() %}<i>{{ value }}</i>{% endmacro %}`,
+		`{% macro defaulted(value=value|escape) %}[{{ value }}]{% endmacro %}`,
+		`{{ wrap(value|escape) }}`,
+		`{{ wrap(trusted()) }}`,
+		`{{ wrap(inner()) }}`,
+		`{{ defaulted() }}`,
+	}, ""))
+	if err != nil {
+		t.Fatalf("FromString: %v", err)
+	}
+	got, err := tpl.Execute(pongo2.Context{"value": `<b>&</b>`})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want := `[&lt;b&gt;&amp;&lt;/b&gt;]` +
+		`[<b>&</b>]` +
+		`[<i>&lt;b&gt;&amp;&lt;/b&gt;</i>]` +
+		`[&lt;b&gt;&amp;&lt;/b&gt;]`
+	if got != want {
+		t.Fatalf("Execute = %q, want %q", got, want)
+	}
+}
+
+func TestMacroArgumentsRetainCallTimeSnapshots(t *testing.T) {
+	set := pongo2.NewSet("macro-argument-snapshots", &pongo2.DummyLoader{})
+	items := []string{"slice-before"}
+	person := &macroProfile{Name: "field-before"}
+	values := map[string]string{"key": "map-before"}
+	set.Globals["mutate"] = func() string {
+		items[0] = "slice-after"
+		person.Name = "field-after"
+		values["key"] = "map-after"
+		return ""
+	}
+	tpl, err := set.FromString(
+		`{% macro use(item,name,values) %}` +
+			`{{ mutate() }}{{ item }}|{{ name }}|{{ values.key }}` +
+			`{% endmacro %}{{ use(items.0,person.Name,values) }}`,
+	)
+	if err != nil {
+		t.Fatalf("FromString: %v", err)
+	}
+	got, err := tpl.Execute(pongo2.Context{
+		"items": items, "person": person, "values": values,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if want := "slice-before|field-before|map-after"; got != want {
+		t.Fatalf("Execute = %q, want %q", got, want)
+	}
+	if items[0] != "slice-after" || person.Name != "field-after" || values["key"] != "map-after" {
+		t.Fatalf("mutations did not reach source values: %q / %q / %q", items[0], person.Name, values["key"])
 	}
 }
