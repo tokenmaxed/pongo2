@@ -430,7 +430,13 @@ func (l *lexer) next() rune {
 		l.width = 0
 		return EOF
 	}
-	r, w := l.decodeRune()
+	var r rune
+	var w int
+	if value := l.input[l.pos]; value < utf8.RuneSelf {
+		r, w = rune(value), 1
+	} else {
+		r, w = utf8.DecodeRuneInString(l.input[l.pos:])
+	}
 	if l.counter != nil && !l.countReserve(l.pos+w, 0) {
 		l.width = 0
 		return EOF
@@ -439,15 +445,6 @@ func (l *lexer) next() rune {
 	l.pos += l.width
 	l.col++
 	return r
-}
-
-// Both modes use the same cursor and decoder. The ASCII case avoids a full UTF-8
-// decoder call for the repeated peeks used by the template states.
-func (l *lexer) decodeRune() (rune, int) {
-	if value := l.input[l.pos]; value < utf8.RuneSelf {
-		return rune(value), 1
-	}
-	return utf8.DecodeRuneInString(l.input[l.pos:])
 }
 
 // backup steps back one rune in the input.

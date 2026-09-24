@@ -80,10 +80,24 @@ do not simply update the fingerprint to make a failing parity check pass.
 The corpus and checks ship in the module; they require no private audit files
 or network oracle.
 
-The shared cursor handles ASCII directly and delegates every non-ASCII byte to
-`utf8.DecodeRuneInString`, preserving its invalid-byte behavior. This small
-fast path offsets optional-reservation checks on repeated peeks. Both count
-and token modes still use the same cursor and states.
-`TestLexerDecoderMatchesUTF8` checks byte values, offsets and truncated inputs
-against the original decoder. Ordinary `Lex` benchmarks accompany changes to
-this hot path, separately from count-mode allocation evidence.
+The shared cursor decodes ASCII inline in `next` and passes every other byte
+to `utf8.DecodeRuneInString`, preserving its invalid-byte behavior. Both count
+and token modes use the same cursor and states. `v7.0.0-baseml.6` held the
+ASCII test in a separate `decodeRune` method that exceeds the compiler's
+inlining budget (cost 114, budget 80 under Go 1.27.1), so `next` called it for
+every rune, ASCII included. That helper did not offset the optional-reservation
+checks: under Go 1.27.1, whose inlinable `utf8.DecodeRuneInString` already
+gave `v7.0.0-baseml.5` a call-free ASCII path, it made ordinary `Lex` of long
+ASCII runs slower than `.5`. `v7.0.0-baseml.7` removes it; keep the ASCII test
+in `next`, where it needs no call. Measured under Go 1.27.1 with interleaved
+paired rounds and identical-copy controls, `.7` takes 0.77-0.91 of `.6`'s
+ordinary `Lex` time on 4 KiB text, comment, verbatim, identifier and
+escaped-string inputs and 0.94-0.95 on dense tags. Against `.5` it is within
+5% on comments, identifiers and escaped strings, 5-12% slower on plain text
+and 8-13% faster on dense tags; on verbatim input it measured 1.03-1.19 of
+`.5`, whose identical builds differ there by up to 15% with code placement.
+Under the Go 1.25.0 floor, `.7` is faster than both.
+`TestLexerDecoderMatchesUTF8` drives `next` over byte values, offsets and
+truncated inputs against the original decoder. Ordinary `Lex` benchmarks under
+the fork's Go floor and the consumer's Go version accompany changes to this
+hot path, separately from count-mode allocation evidence.
