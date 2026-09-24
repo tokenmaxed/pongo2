@@ -41,10 +41,11 @@ func TestLexerDecoderMatchesUTF8(t *testing.T) {
 	for end := 1; end <= len(input); end++ {
 		for pos := 0; pos < end; pos++ {
 			l := lexer{input: input[:end], pos: pos}
-			got, width := l.decodeRune()
+			got := l.next()
 			want, wantWidth := utf8.DecodeRuneInString(input[pos:end])
-			if got != want || width != wantWidth {
-				t.Fatalf("decode [%d:%d] = (%U,%d), want (%U,%d)", pos, end, got, width, want, wantWidth)
+			if got != want || l.width != wantWidth || l.pos != pos+wantWidth {
+				t.Fatalf("next [%d:%d] = (%U,%d) at %d, want (%U,%d) at %d",
+					pos, end, got, l.width, l.pos, want, wantWidth, pos+wantWidth)
 			}
 		}
 	}
